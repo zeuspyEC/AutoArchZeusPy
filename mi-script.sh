@@ -102,80 +102,92 @@ set_keyboard_layout() {
 
 # Función para verificar la conexión a Internet
 check_internet_connection() {
-  # Primero intentamos hacer ping para verificar la conexión
-  if ping -c1 8.8.8.8 &> /dev/null; then
-    dialog --backtitle "Instalador de Arch Linux" \
-           --title "Conexión a Internet" \
-           --msgbox "La conexión a Internet está activa." \
-           5 40
-    return 0
-  fi
+    # Verificar conexión sin mostrar salida
+    if ping -c1 8.8.8.8 >/dev/null 2>&1; then
+        dialog --clear \
+               --no-collapse \
+               --backtitle "Instalador de Arch Linux" \
+               --title "Conexión a Internet" \
+               --msgbox "La conexión a Internet está activa." \
+               0 0
+        return 0
+    else
+        # Si no hay conexión, verificar interfaz wireless
+        wireless_interface=$(ip link | grep -E '^[0-9]+: w' | cut -d: -f2 | awk '{print $1}' | head -n1)
+        
+        if [ -n "$wireless_interface" ]; then
+            dialog --clear \
+                   --no-collapse \
+                   --backtitle "Instalador de Arch Linux" \
+                   --title "Configuración de red" \
+                   --yesno "No hay conexión a Internet. ¿Desea configurar la red WiFi?" \
+                   0 0
 
-  # Si no hay conexión, preguntamos si desea configurar WiFi
-  if dialog --backtitle "Instalador de Arch Linux" \
-            --title "Sin conexión" \
-            --yesno "No hay conexión a Internet. ¿Desea configurar una conexión WiFi?" \
-            7 60; then
-    
-    # Mostrar interfaces de red disponibles
-    interfaces=$(ip link | grep -E '^[0-9]+: w' | cut -d: -f2 | tr -d ' ')
-    
-    if [ -z "$interfaces" ]; then
-      dialog --backtitle "Instalador de Arch Linux" \
-             --title "Error" \
-             --msgbox "No se detectaron interfaces WiFi." \
-             5 40
-      return 1
-    fi
-
-    # Mostrar redes disponibles
-    dialog --backtitle "Instalador de Arch Linux" \
-           --title "Escaneando redes" \
-           --infobox "Buscando redes WiFi disponibles..." \
-           3 40
-    
-    # Usar iwctl para listar redes
-    iwctl station wlan0 get-networks > /tmp/networks
-    
-    # Solicitar SSID
-    ssid=$(dialog --clear --stdout --backtitle "Instalador de Arch Linux" \
-                  --title "Configuración WiFi" \
-                  --inputbox "Ingrese el nombre de la red (SSID):" \
-                  8 40)
-
-    if [ -n "$ssid" ]; then
-      # Solicitar contraseña
-      password=$(dialog --clear --stdout --backtitle "Instalador de Arch Linux" \
-                       --title "Configuración WiFi" \
-                       --passwordbox "Ingrese la contraseña de la red:" \
-                       8 40)
-
-      # Intentar conexión
-      if iwctl --passphrase "$password" station wlan0 connect "$ssid"; then
-        sleep 3
-        if ping -c1 8.8.8.8 &> /dev/null; then
-          dialog --backtitle "Instalador de Arch Linux" \
-                 --title "Conexión exitosa" \
-                 --msgbox "Conexión a Internet establecida correctamente." \
-                 5 40
-          return 0
+            if [ $? -eq 0 ]; then
+                # Activar interfaz wireless
+                ip link set "$wireless_interface" up
+                
+                # Mostrar redes disponibles
+                iwctl station "$wireless_interface" scan
+                sleep 2
+                
+                # Obtener SSID
+                ssid=$(dialog --clear \
+                              --no-collapse \
+                              --backtitle "Instalador de Arch Linux" \
+                              --title "Configuración WiFi" \
+                              --inputbox "Ingrese el nombre de la red (SSID):" \
+                              0 0 \
+                              3>&1 1>&2 2>&3)
+                
+                if [ $? -eq 0 ] && [ -n "$ssid" ]; then
+                    # Obtener contraseña
+                    password=$(dialog --clear \
+                                    --no-collapse \
+                                    --backtitle "Instalador de Arch Linux" \
+                                    --title "Configuración WiFi" \
+                                    --passwordbox "Ingrese la contraseña de la red:" \
+                                    0 0 \
+                                    3>&1 1>&2 2>&3)
+                    
+                    if [ $? -eq 0 ]; then
+                        # Intentar conexión
+                        iwctl --passphrase "$password" station "$wireless_interface" connect "$ssid"
+                        sleep 3
+                        
+                        if ping -c1 8.8.8.8 >/dev/null 2>&1; then
+                            dialog --clear \
+                                   --no-collapse \
+                                   --backtitle "Instalador de Arch Linux" \
+                                   --title "Conexión exitosa" \
+                                   --msgbox "Conexión a Internet establecida correctamente." \
+                                   0 0
+                            return 0
+                        fi
+                    fi
+                fi
+            fi
         fi
-      fi
-      
-      dialog --backtitle "Instalador de Arch Linux" \
-             --title "Error de conexión" \
-             --msgbox "No se pudo establecer la conexión WiFi." \
-             5 40
-      return 1
+        
+        # Si llegamos aquí, no se pudo establecer conexión
+        dialog --clear \
+               --no-collapse \
+               --backtitle "Instalador de Arch Linux" \
+               --title "Error" \
+               --msgbox "No se pudo establecer una conexión a Internet. La instalación no puede continuar." \
+               0 0
+        exit 1
     fi
-  fi
+}
 
-  # Si llegamos aquí, no se pudo establecer conexión
-  dialog --backtitle "Instalador de Arch Linux" \
-         --title "Error" \
-         --msgbox "No se pudo establecer una conexión a Internet. La instalación no puede continuar." \
-         7 60
-  exit 1
+# Verificar y instalar dependencias necesarias
+check_dependencies() {
+    local deps=("dialog" "iwd" "ip")
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            pacman -Sy "$dep" --noconfirm
+        fi
+    done
 }
 # Función para detectar si existe una instalación de Windows
 detect_windows_installation() {
@@ -429,6 +441,7 @@ main() {
   
   select_language
   set_keyboard_layout
+  check_dependencies
   check_internet_connection
   
   detect_windows_installation
@@ -460,4 +473,9 @@ main() {
   reboot
 }
 
-main
+if [ "$EUID" -ne 0 ]; then
+    echo "Este script debe ejecutarse como root"
+    exit 1
+fi
+
+main "$@"

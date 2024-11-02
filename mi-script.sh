@@ -9,21 +9,29 @@ NC='\033[0m'
 
 # Función para centrar texto
 format_center() {
-  local text="$1"
-  local width=$(tput cols)
-  local padding=$((($width - ${#text}) / 2))
-  printf "%*s%s%*s\n" $padding "" "$text" $padding ""
+    if [ -z "$1" ]; then
+        return 1
+    fi
+    local text="$1"
+    local width=$(tput cols)
+    local padding=$((($width - ${#text}) / 2))
+    printf "%*s%s%*s\n" $padding "" "$text" $padding ""
 }
-
 # Función para mostrar el banner
 display_banner() {
   clear
-  format_center "${BLUE}███████╗███████╗██╗   ██╗███████╗██████╗ ██╗   ██╗███████╗ ██████╗${NC}"
-  format_center "${BLUE}╚══███╔╝██╔════╝██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝██╔════╝██╔════╝${NC}"
-  format_center "${BLUE}  ███╔╝ █████╗  ██║   ██║███████╗██████╔╝ ╚████╔╝ █████╗  ██║     ${NC}"
-  format_center "${BLUE} ███╔╝  ██╔══╝  ██║   ██║╚════██║██╔═══╝   ╚██╔╝  ██╔══╝  ██║     ${NC}"
-  format_center "${BLUE}███████╗███████╗╚██████╔╝███████║██║        ██║   ███████╗╚██████╗${NC}"
-  format_center "${BLUE}╚══════╝╚══════╝ ╚═════╝ ╚══════╝╚═╝        ╚═╝   ╚══════╝ ╚═════╝${NC}"
+  local banner_text="${BLUE}███████╗███████╗██╗   ██╗███████╗██████╗ ██╗   ██╗███████╗ ██████╗${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}╚══███╔╝██╔════╝██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝██╔════╝██╔════╝${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}  ███╔╝ █████╗  ██║   ██║███████╗██████╔╝ ╚████╔╝ █████╗  ██║     ${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE} ███╔╝  ██╔══╝  ██║   ██║╚════██║██╔═══╝   ╚██╔╝  ██╔══╝  ██║     ${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}}███████╗███████╗╚██████╔╝███████║██║        ██║   ███████╗╚██████╗${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}╚══════╝╚══════╝ ╚═════╝ ╚══════╝╚═╝        ╚═╝   ╚══════╝ ╚═════╝${NC}"
+  format_center "$banner_text"
   echo
 }
 

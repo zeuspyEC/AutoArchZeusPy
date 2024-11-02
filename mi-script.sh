@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Colores
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
 # Función para centrar texto
 format_center_literals() {
   local text="$1"
@@ -11,20 +18,19 @@ format_center_literals() {
 # Banner "ZeusPy"
 display_banner() {
   local banner=(
-    " ▒███████▒▓█████  █    ██   ██████  ██▓███  ▓██   ██▓"
-    "▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒ ▒██  ██▒"
-    "░ ▒ ▄▀▒░ ▒███   ▓██  ▒██░░ ▓██▄   ▓██░ ██▓▒  ▒██ ██░"
-    "  ▄▀▒   ░▒▓█  ▄ ▓▓█  ░██░  ▒   ██▒▒██▄█▓▒ ▒  ░ ▐██▓░"
-    "▒███████▒░▒████▒▒▒█████▓ ▒██████▒▒▒██▒ ░  ░  ░ ██▒▓░"
-    "░▒▒ ▓░▒░▒░░ ▒░ ░░▒▓▒ ▒ ▒ ▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░   ██▒▒▒ "
-    "░░▒ ▒ ░ ▒ ░ ░  ░░░▒░ ░ ░ ░ ░▒  ░ ░░▒ ░     ▓██ ░▒░ "
-    "░ ░ ░ ░ ░   ░    ░░░ ░ ░ ░  ░  ░  ░░       ▒ ▒ ░░  "
-    "  ░ ░       ░  ░   ░           ░           ░ ░     "
-    "░                                         ░ ░     "
+    "${BLUE} ▒███████▒▓█████  █    ██   ██████  ██▓███  ▓██   ██▓${NC}"
+    "${BLUE}▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒ ▒██  ██▒${NC}"
+    "${BLUE}░ ▒ ▄▀▒░ ▒███   ▓██  ▒██░░ ▓██▄   ▓██░ ██▓▒  ▒██ ██░${NC}"
+    "${BLUE}  ▄▀▒   ░▒▓█  ▄ ▓▓█  ░██░  ▒   ██▒▒██▄█▓▒ ▒  ░ ▐██▓░${NC}"
+    "${BLUE}▒███████▒░▒████▒▒▒█████▓ ▒██████▒▒▒██▒ ░  ░  ░ ██▒▓░${NC}"
+    "${BLUE}░▒▒ ▓░▒░▒░░ ▒░ ░░▒▓▒ ▒ ▒ ▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░   ██▒▒▒ ${NC}"
+    "${BLUE}░░▒ ▒ ░ ▒ ░ ░  ░░░▒░ ░ ░ ░ ░▒  ░ ░░▒ ░     ▓██ ░▒░ ${NC}"
+    "${BLUE}░ ░ ░ ░ ░   ░    ░░░ ░ ░ ░  ░  ░  ░░       ▒ ▒ ░░  ${NC}"
+    "${BLUE}  ░ ░       ░  ░   ░           ░           ░ ░     ${NC}"
+    "${BLUE}░                                         ░ ░     ${NC}"
   )
 
   clear
-  echo -e "\033[34m"
   for line in "${banner[@]}"; do
     format_center_literals "$line"
     sleep 0.05
@@ -42,10 +48,10 @@ show_progress() {
   local progress=$((current_step * progress_width / total_steps))
   local remaining=$((progress_width - progress))
 
-  printf "["
-  printf "%*s" "$progress" | tr ' ' '='
-  printf "%*s" "$remaining" | tr ' ' ' '
-  printf "] %s (%d/%d)\r" "$step_name" "$current_step" "$total_steps"
+  printf "${CYAN}["
+  printf "${GREEN}%*s${NC}" "$progress" | tr ' ' '='
+  printf "${CYAN}%*s${NC}" "$remaining" | tr ' ' ' '
+  printf "${CYAN}]${NC} ${BLUE}%s${NC} ${CYAN}(%d/%d)${NC}\r" "$step_name" "$current_step" "$total_steps"
 }
 
 # Función para obtener la lista de particiones
@@ -53,11 +59,11 @@ get_partitions() {
   local partitions=$(lsblk -n -o NAME,SIZE,TYPE -p | awk '/part|lvm/ {print $1, $2, $3}')
 
   if [ -z "$partitions" ]; then
-    partitions=$(fdisk -l | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
+    partitions=$(fdisk -l 2>/dev/null | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
   fi
 
   if [ -z "$partitions" ]; then
-    partitions=$(parted -l | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
+    partitions=$(parted -l 2>/dev/null | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
   fi
 
   echo "$partitions"
@@ -80,10 +86,32 @@ select_installation_partition() {
   selected_partition=$(whiptail --title "Selección de Partición" --menu "Seleccione la partición donde desea instalar Arch Linux:" 20 78 10 "${partition_options[@]}" 3>&1 1>&2 2>&3)
 
   if [ $? -eq 0 ]; then
-    echo "Partición seleccionada: $selected_partition"
+    echo -e "${GREEN}Partición seleccionada:${NC} ${BLUE}$selected_partition${NC}"
   else
-    echo "No se seleccionó ninguna partición. Saliendo del instalador."
+    echo -e "${RED}No se seleccionó ninguna partición. Saliendo del instalador.${NC}"
     exit 1
+  fi
+}
+
+# Función para detectar el modo de arranque (UEFI o BIOS)
+detect_boot_mode() {
+  if [ -d "/sys/firmware/efi/efivars" ]; then
+    echo -e "${GREEN}Modo de arranque:${NC} ${BLUE}UEFI${NC}"
+    boot_mode="uefi"
+  else
+    echo -e "${GREEN}Modo de arranque:${NC} ${BLUE}BIOS${NC}"
+    boot_mode="bios"
+  fi
+}
+
+# Función para detectar si existe una instalación de Windows
+detect_windows_installation() {
+  if [ -d "/mnt/windows" ]; then
+    windows_installed=true
+    echo -e "${GREEN}Se detectó una instalación de Windows.${NC}"
+  else
+    windows_installed=false
+    echo -e "${GREEN}No se encontró una instalación de Windows.${NC}"
   fi
 }
 
@@ -226,7 +254,7 @@ main() {
 
   install_window_manager
 
-  echo "Instalación completada. Reinicie el sistema."
+  echo -e "${GREEN}Instalación completada. Reinicie el sistema.${NC}"
 }
 
 # Ejecutar script

@@ -1,1 +1,3 @@
 # autoArchZ
+
+This is a autoinstall for Arch users...

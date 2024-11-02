@@ -15,19 +15,19 @@ format_center_literals() {
   printf "%*s%s%*s\n" $padding "" "$text" $padding ""
 }
 
-# Banner "ZeusPy"
+# Banner "ZeusPyEC"
 display_banner() {
   local banner=(
-    "${BLUE} ▒███████▒▓█████  █    ██   ██████  ██▓███  ▓██   ██▓${NC}"
-    "${BLUE}▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒ ▒██  ██▒${NC}"
-    "${BLUE}░ ▒ ▄▀▒░ ▒███   ▓██  ▒██░░ ▓██▄   ▓██░ ██▓▒  ▒██ ██░${NC}"
-    "${BLUE}  ▄▀▒   ░▒▓█  ▄ ▓▓█  ░██░  ▒   ██▒▒██▄█▓▒ ▒  ░ ▐██▓░${NC}"
-    "${BLUE}▒███████▒░▒████▒▒▒█████▓ ▒██████▒▒▒██▒ ░  ░  ░ ██▒▓░${NC}"
-    "${BLUE}░▒▒ ▓░▒░▒░░ ▒░ ░░▒▓▒ ▒ ▒ ▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░   ██▒▒▒ ${NC}"
-    "${BLUE}░░▒ ▒ ░ ▒ ░ ░  ░░░▒░ ░ ░ ░ ░▒  ░ ░░▒ ░     ▓██ ░▒░ ${NC}"
-    "${BLUE}░ ░ ░ ░ ░   ░    ░░░ ░ ░ ░  ░  ░  ░░       ▒ ▒ ░░  ${NC}"
-    "${BLUE}  ░ ░       ░  ░   ░           ░           ░ ░     ${NC}"
-    "${BLUE}░                                         ░ ░     ${NC}"
+    "${BLUE} ▒███████▒▓█████  █    ██   ██████  ██▓███ ▓██   ██▓▓█████  ▄████▄${NC}"
+    "${BLUE}▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒▒██  ██▒▓█   ▀ ▒██▀ ▀█${NC}"
+    "${BLUE}░ ▒ ▄▀▒░ ▒███   ▓██  ▒██░░ ▓██▄   ▓██░ ██▓▒ ▒██ ██░▒███   ▒▓█    ▄${NC}"
+    "${BLUE}  ▄▀▒   ░▒▓█  ▄ ▓▓█  ░██░  ▒   ██▒▒██▄█▓▒ ▒ ░ ▐██▓░▒▓█  ▄ ▒▓▓▄ ▄██▒${NC}"
+    "${BLUE}▒███████▒░▒████▒▒▒█████▓ ▒██████▒▒▒██▒ ░  ░ ░ ██▒▓░░▒████▒▒ ▓███▀ ░${NC}"
+    "${BLUE}░▒▒ ▓░▒░▒░░ ▒░ ░░▒▓▒ ▒ ▒ ▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░  ██▒▒▒ ░░ ▒░ ░░ ░▒ ▒  ░${NC}"
+    "${BLUE}░░▒ ▒ ░ ▒ ░ ░  ░░░▒░ ░ ░ ░ ░▒  ░ ░░▒ ░     ▓██ ░▒░  ░ ░  ░  ░  ▒${NC}"
+    "${BLUE}░ ░ ░ ░ ░   ░    ░░░ ░ ░ ░  ░  ░  ░░       ▒ ▒ ░░     ░   ░${NC}"
+    "${BLUE}  ░ ░       ░  ░   ░           ░           ░ ░        ░  ░░ ░${NC}"
+    "${BLUE}░                                         ░ ░             ░ ░${NC}"
   )
 
   clear
@@ -56,14 +56,29 @@ show_progress() {
 
 # Función para obtener la lista de particiones
 get_partitions() {
-  local partitions=$(lsblk -n -o NAME,SIZE,TYPE -p | awk '/part|lvm/ {print $1, $2, $3}')
+  local partitions=""
+
+  # Obtener particiones utilizando lsblk
+  partitions=$(lsblk -n -o NAME,SIZE,TYPE -p | awk '/part|lvm/ {print $1, $2, $3}')
 
   if [ -z "$partitions" ]; then
+    # Obtener particiones utilizando fdisk
     partitions=$(fdisk -l 2>/dev/null | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
   fi
 
   if [ -z "$partitions" ]; then
+    # Obtener particiones utilizando parted
     partitions=$(parted -l 2>/dev/null | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
+  fi
+
+  if [ -z "$partitions" ]; then
+    # Obtener particiones utilizando df
+    partitions=$(df -h | awk '$1 ~ /^\/dev\// {print $1, $2, "partition"}')
+  fi
+
+  if [ -z "$partitions" ]; then
+    # Obtener particiones utilizando mount
+    partitions=$(mount | awk '$1 ~ /^\/dev\// {print $1, $3, "partition"}')
   fi
 
   echo "$partitions"
@@ -73,23 +88,22 @@ get_partitions() {
 select_installation_partition() {
   local partitions=$(get_partitions)
 
-  partition_list=()
-  while IFS= read -r line; do
-    partition_list+=("$line")
-  done <<< "$partitions"
+  echo -e "${CYAN}Información de particiones:${NC}"
+  echo -e "${partitions}\n"
 
-  partition_options=()
-  for partition in "${partition_list[@]}"; do
-    partition_options+=("$partition" "")
-  done
+  echo -e "${CYAN}Ejemplo de formato para ingresar la partición:${NC}"
+  echo -e "${GREEN}/dev/sda1${NC}"
 
-  selected_partition=$(whiptail --title "Selección de Partición" --menu "Seleccione la partición donde desea instalar Arch Linux:" 20 78 10 "${partition_options[@]}" 3>&1 1>&2 2>&3)
+  read -p "Ingrese la partición donde desea instalar Arch Linux (o presione Enter para utilizar la primera partición disponible): " selected_partition
 
-  if [ $? -eq 0 ]; then
-    echo -e "${GREEN}Partición seleccionada:${NC} ${BLUE}$selected_partition${NC}"
+  if [ -z "$selected_partition" ]; then
+    selected_partition=$(echo "$partitions" | head -n 1 | awk '{print $1}')
+    echo -e "${GREEN}Se utilizará la primera partición disponible: ${BLUE}$selected_partition${NC}"
   else
-    echo -e "${RED}No se seleccionó ninguna partición. Saliendo del instalador.${NC}"
-    exit 1
+    if ! echo "$partitions" | grep -q "$selected_partition"; then
+      echo -e "${RED}La partición ingresada no es válida. Saliendo del instalador.${NC}"
+      exit 1
+    fi
   fi
 }
 
@@ -227,10 +241,21 @@ EOF
 # Función principal
 main() {
   display_banner
+
   detect_boot_mode
   detect_windows_installation
 
+  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+  echo -e "${BLUE}~~1. Selección de partición${NC}"
+  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+  sleep 2
+
   select_installation_partition
+
+  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+  echo -e "${BLUE}~~2. Particionado y formateo${NC}"
+  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+  sleep 2
 
   if [ "$boot_mode" == "uefi" ]; then
     partition_disk_uefi
@@ -240,9 +265,19 @@ main() {
     mount_partitions_bios
   fi
 
+  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+  echo -e "${BLUE}~~3. Instalación del sistema base${NC}"
+  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+  sleep 2
+
   install_base_system
   generate_fstab
   configure_system
+
+  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+  echo -e "${BLUE}~~4. Instalación y configuración de GRUB${NC}"
+  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+  sleep 2
 
   if [ "$boot_mode" == "uefi" ]; then
     install_grub_uefi
@@ -252,9 +287,14 @@ main() {
     configure_dual_boot_bios
   fi
 
+  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+  echo -e "${BLUE}~~5. Instalación y configuración del gestor de ventanas${NC}"
+  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+  sleep 2
+
   install_window_manager
 
-  echo -e "${GREEN}Instalación completada. Reinicie el sistema.${NC}"
+  echo -e "\n${GREEN}Instalación completada. Reinicie el sistema.${NC}"
 }
 
 # Ejecutar script

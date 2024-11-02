@@ -332,24 +332,39 @@ check_internet_connection() {
     return 1
 }
 
-# Verificar y instalar dependencias necesarias
+# Función mejorada para verificar dependencias
 check_dependencies() {
     log "INFO" "Verificando dependencias..."
-    local deps=("dialog" "iwd" "ip")
+    local deps=("dialog" "iwd" "ip" "arch-install-scripts" "parted")
+    local missing_deps=()
+    
     for dep in "${deps[@]}"; do
-        if ! command -v "$dep" >/dev/null 2>&1; then
-            log "WARN" "Dependencia faltante: $dep. Intentando instalar..."
-            pacman -Sy "$dep" --noconfirm
-            if [ $? -ne 0 ]; then
-                log "ERROR" "No se pudo instalar $dep"
-                return 1
-            fi
-            log "INFO" "$dep instalado correctamente"
+        log "DEBUG" "Verificando dependencia: $dep"
+        if ! command -v "$dep" &>/dev/null; then
+            log "WARN" "Dependencia faltante: $dep"
+            missing_deps+=("$dep")
         else
             log "INFO" "Dependencia $dep ya está instalada"
         fi
     done
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        log "INFO" "Instalando dependencias faltantes: ${missing_deps[*]}"
+        if ! pacman -Sy --noconfirm "${missing_deps[@]}" 2>>$ERROR_LOG; then
+            log "ERROR" "Fallo al instalar dependencias"
+            dialog --clear \
+                   --backtitle "Instalador de Arch Linux" \
+                   --title "Error" \
+                   --msgbox "No se pudieron instalar las dependencias necesarias. Verifica tu conexión a Internet y vuelve a intentarlo." \
+                   8 60
+            return 1
+        fi
+    fi
+    
+    log "INFO" "Todas las dependencias están instaladas"
+    return 0
 }
+
 # Función para detectar si existe una instalación de Windows
 detect_windows_installation() {
   if [ -d "/sys/firmware/efi/efivars" ]; then
@@ -367,44 +382,90 @@ detect_windows_installation() {
 
 # Función para obtener la lista de particiones
 get_partitions() {
-  partitions=$(lsblk -n -o NAME,SIZE,TYPE -p | awk '/part|lvm/ {print $1, $2, $3}')
-  echo "$partitions"
+    log "DEBUG" "Obteniendo lista de particiones"
+    local partitions=""
+    local count=0
+    
+    while IFS= read -r line; do
+        if [[ $line =~ /dev/ ]] && [[ $line =~ part|lvm ]]; then
+            local device=$(echo "$line" | awk '{print $1}')
+            local size=$(echo "$line" | awk '{print $2}')
+            local type=$(echo "$line" | awk '{print $3}')
+            partitions="$partitions $device \"$size - $type\" "
+            ((count++))
+        fi
+    done < <(lsblk -pn -o NAME,SIZE,TYPE)
+    
+    if [ $count -eq 0 ]; then
+        log "ERROR" "No se encontraron particiones disponibles"
+        return 1
+    }
+    
+    echo "$partitions"
+    log "DEBUG" "Particiones encontradas: $partitions"
+    return 0
 }
 
 # Función para seleccionar la partición de instalación
+# Función mejorada para seleccionar la partición
 select_installation_partition() {
-  partitions=$(get_partitions)
-  partition_list=""
-  
-  while IFS= read -r partition; do
-    partition_list+="$partition \"\" "
-  done <<< "$partitions"
-
-  selected_partition=$(dialog --clear --stdout --backtitle "Instalador de Arch Linux" \
-                              --title "Selección de partición" \
-                              --menu "Selecciona la partición donde deseas instalar Arch Linux:" \
-                              20 60 10 \
-                              $partition_list)
-                              
-  case $? in
-    0)
-      ;;
-    1)
-      if dialog --clear --backtitle "Instalador de Arch Linux" \
-                --title "Cancelar instalación" \
-                --yesno "¿Estás seguro de que deseas cancelar la instalación?" \
-                7 60; then
-        echo "Instalación cancelada."
-        exit 0
-      else
-        select_installation_partition
-      fi
-      ;;
-    255)
-      echo "Ocurrió un error inesperado."
-      exit 1
-      ;;
-  esac
+    log "INFO" "Iniciando selección de partición"
+    
+    local partition_list=$(get_partitions)
+    if [ $? -ne 0 ]; then
+        log "ERROR" "No hay particiones disponibles para la instalación"
+        dialog --clear \
+               --backtitle "Instalador de Arch Linux" \
+               --title "Error" \
+               --msgbox "No se encontraron particiones disponibles para la instalación." \
+               7 60
+        return 1
+    }
+    
+    log "DEBUG" "Lista de particiones: $partition_list"
+    
+    selected_partition=$(dialog --clear \
+                               --stdout \
+                               --backtitle "Instalador de Arch Linux" \
+                               --title "Selección de partición" \
+                               --menu "Selecciona la partición donde deseas instalar Arch Linux:" \
+                               20 60 10 \
+                               $partition_list 2>>$ERROR_LOG)
+    
+    local dialog_status=$?
+    log "DEBUG" "Estado de dialog: $dialog_status"
+    
+    case $dialog_status in
+        0)
+            log "INFO" "Partición seleccionada: $selected_partition"
+            export selected_partition
+            return 0
+            ;;
+        1)
+            log "INFO" "Usuario canceló la selección"
+            if dialog --clear \
+                     --backtitle "Instalador de Arch Linux" \
+                     --title "Cancelar instalación" \
+                     --yesno "¿Estás seguro de que deseas cancelar la instalación?" \
+                     7 60; then
+                log "INFO" "Instalación cancelada por el usuario"
+                echo "Instalación cancelada."
+                exit 0
+            else
+                log "INFO" "Reiniciando selección de partición"
+                select_installation_partition
+            fi
+            ;;
+        *)
+            log "ERROR" "Error inesperado en dialog (código: $dialog_status)"
+            dialog --clear \
+                   --backtitle "Instalador de Arch Linux" \
+                   --title "Error" \
+                   --msgbox "Ocurrió un error al seleccionar la partición. Por favor, inténtalo de nuevo." \
+                   7 60
+            return 1
+            ;;
+    esac
 }
 
 # Función para particionar el disco
@@ -602,32 +663,73 @@ main() {
     : > "$LOG_FILE"
     : > "$ERROR_LOG"
     
-    # Verificar si se ejecuta como root
+    # Verificar si es root
     if [ "$EUID" -ne 0 ]; then
         log "ERROR" "El script debe ejecutarse como root"
         echo "Este script debe ejecutarse como root"
         exit 1
-    fi
+    }
+    
+   # Verificar y preparar el sistema
+    if ! check_dependencies; then
+        log "ERROR" "Fallo en la verificación de dependencias"
+        exit 1
+    } 
     
   display_banner
   welcome
   
-  select_language
-  set_keyboard_layout
-  check_dependencies || exit 1
-  check_internet_connection || exit 1
+  if ! select_language; then
+        log "ERROR" "Fallo en la selección de idioma"
+        exit 1
+    }
+    
+  if ! set_keyboard_layout; then
+        log "ERROR" "Fallo en la configuración del teclado"
+        exit 1
+    }
+    
+  if ! check_internet_connection; then
+        log "ERROR" "Fallo en la verificación de conexión a Internet"
+        exit 1
+    }
 
-  log "INFO" "Instalación completada exitosamente"
+
+  if ! detect_windows_installation; then
+        log "ERROR" "Fallo en la verificación si hay otro SO como windows"
+        exit 1
+    }
   
-  detect_windows_installation
+  if ! select_installation_partition; then
+        log "ERROR" "Fallo al seleccionar la partición para la instalación"
+        exit 1
+    }
+
+   if ! partition_disk; then
+        log "ERROR" "Fallo al realizar la partición para la instalación"
+        exit 1
+    }
+
+  if ! configure_swap; then
+        log "ERROR" "Fallo al configurar la particion SWAP"
+        exit 1
+    }
+
+  if ! mount_partitions; then
+        log "ERROR" "Fallo al montar las particiones"
+        exit 1
+    }
+
+  if ! install_base_system; then
+        log "ERROR" "Fallo al realziar la base del sistema"
+        exit 1
+    }
+
+  if ! generate_fstab; then
+        log "ERROR" "fallo al generar la particion de fstab"
+        exit 1
+    }
   
-  select_installation_partition
-  partition_disk
-  configure_swap
-  
-  mount_partitions
-  install_base_system
-  generate_fstab
   
   configure_timezone
   configure_language
@@ -638,6 +740,8 @@ main() {
   create_user
   install_desktop_environment
   install_additional_packages
+      
+  log "INFO" "Instalación completada exitosamente"
   
   dialog --clear --backtitle "Instalador de Arch Linux" \
          --title "Instalación completada" \

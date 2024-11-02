@@ -84,6 +84,48 @@ get_partitions() {
   echo "$partitions"
 }
 
+# Función para seleccionar el modo de instalación
+select_installation_mode() {
+  local mode=$(yad --title="Instalador de Arch Linux" --text="Bienvenido al instalador de Arch Linux\nSeleccione el modo de instalación" \
+    --button="Automática":1 --button="Manual":2 --width=400 --height=200 --center --window-icon="arch-linux-icon.png")
+
+  case $mode in
+    1)
+      echo -e "${GREEN}Iniciando instalación automática...${NC}"
+      automatic_installation
+      ;;
+    2)
+      echo -e "${GREEN}Iniciando instalación manual...${NC}"
+      manual_installation
+      ;;
+    *)
+      echo -e "${RED}Instalación cancelada.${NC}"
+      exit 1
+      ;;
+  esac
+}
+
+# Función para la instalación automática
+automatic_installation() {
+  # Código para la instalación automática
+  echo -e "${GREEN}Realizando instalación automática...${NC}"
+  # Particionado automático del disco
+  # Montaje de particiones
+  # Instalación de paquetes base
+  # Configuración de fstab y red
+  # Creación de usuario y configuración de sudo
+  # Instalación del gestor de arranque
+}
+
+# Función para la instalación manual
+manual_installation() {
+  # Código para la instalación manual
+  echo -e "${GREEN}Realizando instalación manual...${NC}"
+  # Solicitar al usuario realizar cada paso manualmente
+  # Utilizar Whiptail y YAD para crear interfaces de usuario interactivas
+  # Guiar al usuario a través de cada etapa de la instalación
+}
+
 # Función para seleccionar la partición de instalación
 select_installation_partition() {
   local partitions=$(get_partitions)
@@ -94,16 +136,15 @@ select_installation_partition() {
   echo -e "${CYAN}Ejemplo de formato para ingresar la partición:${NC}"
   echo -e "${GREEN}/dev/sda1${NC}"
 
-  read -p "Ingrese la partición donde desea instalar Arch Linux (o presione Enter para utilizar la primera partición disponible): " selected_partition
+  local partition_entry=$(yad --title="Selección de Partición" --text="Ingrese la partición donde desea instalar Arch Linux:" \
+    --entry --entry-text="" --width=400 --height=200 --center --window-icon="arch-linux-icon.png")
 
-  if [ -z "$selected_partition" ]; then
-    selected_partition=$(echo "$partitions" | head -n 1 | awk '{print $1}')
-    echo -e "${GREEN}Se utilizará la primera partición disponible: ${BLUE}$selected_partition${NC}"
+  if [ $? -eq 0 ]; then
+    selected_partition="$partition_entry"
+    echo -e "${GREEN}Partición seleccionada:${NC} ${BLUE}$selected_partition${NC}"
   else
-    if ! echo "$partitions" | grep -q "$selected_partition"; then
-      echo -e "${RED}La partición ingresada no es válida. Saliendo del instalador.${NC}"
-      exit 1
-    fi
+    echo -e "${RED}No se seleccionó ninguna partición. Saliendo del instalador.${NC}"
+    exit 1
   fi
 }
 
@@ -246,14 +287,30 @@ main() {
   detect_windows_installation
 
   printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
-  echo -e "${BLUE}~~1. Selección de partición${NC}"
+  echo -e "${BLUE}~~1. Selección de modo de instalación${NC}"
+  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+  sleep 2
+
+  select_installation_mode
+
+  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+  echo -e "${BLUE}~~2. Obtención de información de particiones${NC}"
+  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+  sleep 2
+
+  local partitions=$(get_partitions)
+  echo -e "${CYAN}Información de particiones:${NC}"
+  echo -e "${partitions}\n"
+
+  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+  echo -e "${BLUE}~~3. Selección de partición de instalación${NC}"
   echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
   sleep 2
 
   select_installation_partition
 
   printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
-  echo -e "${BLUE}~~2. Particionado y formateo${NC}"
+  echo -e "${BLUE}~~4. Particionado y formateo${NC}"
   echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
   sleep 2
 
@@ -266,36 +323,32 @@ main() {
   fi
 
   printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
-  echo -e "${BLUE}~~3. Instalación del sistema base${NC}"
-  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
-  sleep 2
+echo -e "${BLUE}~~5. Instalación del sistema base${NC}"
+echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+sleep 2
 
-  install_base_system
-  generate_fstab
-  configure_system
+install_base_system
+generate_fstab
+configure_system
 
-  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
-  echo -e "${BLUE}~~4. Instalación y configuración de GRUB${NC}"
-  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
-  sleep 2
+printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+echo -e "${BLUE}~~6. Instalación y configuración de GRUB${NC}"
+echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+sleep 2
 
-  if [ "$boot_mode" == "uefi" ]; then
-    install_grub_uefi
-    configure_dual_boot_uefi
-  else
-    install_grub_bios
-    configure_dual_boot_bios
-  fi
+if [ "$boot_mode" == "uefi" ]; then
+  install_grub_uefi
+  configure_dual_boot_uefi
+else
+  install_grub_bios
+  configure_dual_boot_bios
+fi
 
-  printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
-  echo -e "${BLUE}~~5. Instalación y configuración del gestor de ventanas${NC}"
-  echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
-  sleep 2
+printf "\n${CYAN}----------------------------------------------------------------------${NC}\n"
+echo -e "${BLUE}~~7. Instalación y configuración del gestor de ventanas${NC}"
+echo -e "${CYAN}----------------------------------------------------------------------${NC}\n"
+sleep 2
 
-  install_window_manager
+install_window_manager
 
-  echo -e "\n${GREEN}Instalación completada. Reinicie el sistema.${NC}"
-}
-
-# Ejecutar script
-main
+echo -e "\n${GREEN}Instalación completada. Reinicie el sistema.${NC}"

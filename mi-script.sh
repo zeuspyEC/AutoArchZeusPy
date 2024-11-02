@@ -618,7 +618,6 @@ main() {
     fi
     
     # Mostrar banner y bienvenida
-    display_banner
     welcome
     
     # Verificar requisitos

@@ -1,15 +1,135 @@
 #!/usr/bin/env bash
 
+# Configuración del sistema de logging
+LOG_FILE="/tmp/arch_installer.log"
+ERROR_LOG="/tmp/arch_installer_error.log"
+DEBUG_LOG="/tmp/arch_installer_debug.log"
+
 # Variables de colores
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
+
+# Inicializar archivos de log
+: > "$LOG_FILE"
+: > "$ERROR_LOG"
+: > "$DEBUG_LOG"
+
+# Función de logging mejorada
+log() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local line_number="${BASH_LINENO[0]}"
+    local function_name="${FUNCNAME[1]}"
+    
+    # Formato de log: [TIMESTAMP] [LEVEL] [FUNCTION:LINE] Message
+    local log_message="[$timestamp] [$level] [$function_name:$line_number] $message"
+    
+    # Logging según nivel
+    case "$level" in
+        "DEBUG")
+            echo "$log_message" >> "$DEBUG_LOG"
+            ;;
+        "ERROR")
+            echo "$log_message" >> "$ERROR_LOG"
+            echo "$log_message" >> "$LOG_FILE"
+            # Capturar información del sistema en caso de error
+            {
+                echo "=== Sistema Info ==="
+                echo "Kernel: $(uname -a)"
+                echo "Memoria: $(free -h)"
+                echo "Disco: $(df -h)"
+                echo "Procesos: $(ps aux | grep -i dialog)"
+                echo "Variables: $(env)"
+                echo "==================="
+            } >> "$ERROR_LOG"
+            ;;
+        *)
+            echo "$log_message" >> "$LOG_FILE"
+            ;;
+    esac
+}
+
+# Función para manejar errores
+handle_error() {
+    local line_number=$1
+    local error_message=$2
+    local exit_code=$3
+    local function_name="${FUNCNAME[1]}"
+    
+    log "ERROR" "Error en $function_name (línea $line_number): $error_message (Código: $exit_code)"
+    
+    # Capturar stack trace
+    local frame=0
+    echo "=== Stack Trace ===" >> "$ERROR_LOG"
+    while caller $frame; do
+        ((frame++))
+    done >> "$ERROR_LOG"
+    echo "=================" >> "$ERROR_LOG"
+    
+    # Mostrar error al usuario
+    if command -v dialog &> /dev/null; then
+        dialog --clear \
+               --backtitle "Instalador de Arch Linux" \
+               --title "Error" \
+               --msgbox "Ocurrió un error inesperado.\nPor favor, revise el log en: $ERROR_LOG\nFunción: $function_name\nLínea: $line_number\nError: $error_message" \
+               12 60 2>> "$ERROR_LOG"
+    else
+        echo -e "${RED}Error en $function_name (línea $line_number): $error_message${NC}"
+    fi
+}
+
+# Configurar trap para capturar errores
+set -E
+trap 'handle_error ${LINENO} "$BASH_COMMAND" $?' ERR
+
+# Función para envolver comandos con logging
+execute_with_log() {
+    local command="$*"
+    local function_name="${FUNCNAME[1]}"
+    
+    log "DEBUG" "Ejecutando comando: $command"
+    
+    if output=$("$@" 2>&1); then
+        log "INFO" "Comando exitoso: $command"
+        log "DEBUG" "Salida: $output"
+        return 0
+    else
+        local exit_code=$?
+        log "ERROR" "Comando falló ($exit_code): $command"
+        log "ERROR" "Salida: $output"
+        return $exit_code
+    fi
+}
+
+# Función para envolver comandos de dialog con logging
+dialog_wrapper() {
+    log "DEBUG" "Iniciando dialog con argumentos: $*"
+    
+    local output
+    if output=$(dialog "$@" 2>&1); then
+        log "INFO" "Dialog exitoso: $*"
+        log "DEBUG" "Salida: $output"
+        echo "$output"
+        return 0
+    else
+        local exit_code=$?
+        log "WARN" "Dialog cancelado o error ($exit_code)"
+        log "DEBUG" "Salida: $output"
+        return $exit_code
+    fi
+}
 
 # Función para centrar texto
 format_center() {
+    log "DEBUG" "Formateando texto centrado: $1"
     if [ -z "$1" ]; then
+        log "ERROR" "Texto vacío en format_center"
         return 1
     fi
     local text="$1"
@@ -17,6 +137,7 @@ format_center() {
     local padding=$((($width - ${#text}) / 2))
     printf "%*s%s%*s\n" $padding "" "$text" $padding ""
 }
+
 # Función para mostrar el banner
 display_banner() {
   clear
@@ -102,90 +223,130 @@ set_keyboard_layout() {
 
 # Función para verificar la conexión a Internet
 check_internet_connection() {
-    # Verificar conexión sin mostrar salida
+    log "INFO" "Iniciando verificación de conexión a internet"
+    
+    # Verificar si ya hay conexión
     if ping -c1 8.8.8.8 >/dev/null 2>&1; then
+        log "INFO" "Conexión a internet detectada"
         dialog --clear \
-               --no-collapse \
                --backtitle "Instalador de Arch Linux" \
                --title "Conexión a Internet" \
                --msgbox "La conexión a Internet está activa." \
-               0 0
+               6 50 2>> "$ERROR_LOG"
         return 0
-    else
-        # Si no hay conexión, verificar interfaz wireless
-        wireless_interface=$(ip link | grep -E '^[0-9]+: w' | cut -d: -f2 | awk '{print $1}' | head -n1)
-        
-        if [ -n "$wireless_interface" ]; then
-            dialog --clear \
-                   --no-collapse \
-                   --backtitle "Instalador de Arch Linux" \
-                   --title "Configuración de red" \
-                   --yesno "No hay conexión a Internet. ¿Desea configurar la red WiFi?" \
-                   0 0
-
-            if [ $? -eq 0 ]; then
-                # Activar interfaz wireless
-                ip link set "$wireless_interface" up
-                
-                # Mostrar redes disponibles
-                iwctl station "$wireless_interface" scan
-                sleep 2
-                
-                # Obtener SSID
-                ssid=$(dialog --clear \
-                              --no-collapse \
-                              --backtitle "Instalador de Arch Linux" \
-                              --title "Configuración WiFi" \
-                              --inputbox "Ingrese el nombre de la red (SSID):" \
-                              0 0 \
-                              3>&1 1>&2 2>&3)
-                
-                if [ $? -eq 0 ] && [ -n "$ssid" ]; then
-                    # Obtener contraseña
-                    password=$(dialog --clear \
-                                    --no-collapse \
-                                    --backtitle "Instalador de Arch Linux" \
-                                    --title "Configuración WiFi" \
-                                    --passwordbox "Ingrese la contraseña de la red:" \
-                                    0 0 \
-                                    3>&1 1>&2 2>&3)
-                    
-                    if [ $? -eq 0 ]; then
-                        # Intentar conexión
-                        iwctl --passphrase "$password" station "$wireless_interface" connect "$ssid"
-                        sleep 3
-                        
-                        if ping -c1 8.8.8.8 >/dev/null 2>&1; then
-                            dialog --clear \
-                                   --no-collapse \
-                                   --backtitle "Instalador de Arch Linux" \
-                                   --title "Conexión exitosa" \
-                                   --msgbox "Conexión a Internet establecida correctamente." \
-                                   0 0
-                            return 0
-                        fi
-                    fi
-                fi
-            fi
-        fi
-        
-        # Si llegamos aquí, no se pudo establecer conexión
+    fi
+    
+    log "WARN" "No hay conexión a internet. Verificando interfaces de red..."
+    
+    # Verificar interfaces de red
+    local wireless_interface=$(ip link | grep -E '^[0-9]+: w' | cut -d: -f2 | awk '{print $1}' | head -n1)
+    log "INFO" "Interfaz wireless detectada: $wireless_interface"
+    
+    if [ -z "$wireless_interface" ]; then
+        log "ERROR" "No se detectó ninguna interfaz wireless"
         dialog --clear \
-               --no-collapse \
                --backtitle "Instalador de Arch Linux" \
                --title "Error" \
-               --msgbox "No se pudo establecer una conexión a Internet. La instalación no puede continuar." \
-               0 0
-        exit 1
+               --msgbox "No se detectó ninguna interfaz de red wireless." \
+               6 50 2>> "$ERROR_LOG"
+        return 1
     fi
+    
+    # Configurar red wireless
+    local configure_wifi
+    configure_wifi=$(dialog --clear \
+                           --stdout \
+                           --backtitle "Instalador de Arch Linux" \
+                           --title "Configuración de red" \
+                           --yesno "¿Desea configurar la red WiFi?" \
+                           6 50 2>> "$ERROR_LOG")
+    
+    if [ $? -eq 0 ]; then
+        log "INFO" "Usuario eligió configurar WiFi"
+        
+        # Activar interfaz
+        log "INFO" "Activando interfaz $wireless_interface"
+        ip link set "$wireless_interface" up
+        sleep 2
+        
+        # Escanear redes
+        log "INFO" "Escaneando redes disponibles"
+        iwctl station "$wireless_interface" scan
+        sleep 2
+        
+        # Obtener SSID
+        local ssid
+        ssid=$(dialog --clear \
+                     --stdout \
+                     --backtitle "Instalador de Arch Linux" \
+                     --title "Configuración WiFi" \
+                     --inputbox "Ingrese el nombre de la red (SSID):" \
+                     8 50 2>> "$ERROR_LOG")
+        
+        if [ $? -eq 0 ] && [ -n "$ssid" ]; then
+            log "INFO" "SSID ingresado: $ssid"
+            
+            # Obtener contraseña
+            local password
+            password=$(dialog --clear \
+                            --stdout \
+                            --backtitle "Instalador de Arch Linux" \
+                            --title "Configuración WiFi" \
+                            --passwordbox "Ingrese la contraseña de la red:" \
+                            8 50 2>> "$ERROR_LOG")
+            
+            if [ $? -eq 0 ]; then
+                log "INFO" "Intentando conexión a $ssid"
+                
+                # Intentar conexión
+                iwctl --passphrase "$password" station "$wireless_interface" connect "$ssid" 2>> "$ERROR_LOG"
+                sleep 5
+                
+                if ping -c1 8.8.8.8 >/dev/null 2>&1; then
+                    log "INFO" "Conexión exitosa a $ssid"
+                    dialog --clear \
+                           --backtitle "Instalador de Arch Linux" \
+                           --title "Conexión exitosa" \
+                           --msgbox "Conexión a Internet establecida correctamente." \
+                           6 50 2>> "$ERROR_LOG"
+                    return 0
+                else
+                    log "ERROR" "No se pudo establecer conexión después de conectar a $ssid"
+                fi
+            else
+                log "WARN" "Usuario canceló la entrada de contraseña"
+            fi
+        else
+            log "WARN" "Usuario canceló la entrada de SSID"
+        fi
+    else
+        log "WARN" "Usuario eligió no configurar WiFi"
+    fi
+    
+    log "ERROR" "No se pudo establecer conexión a internet"
+    dialog --clear \
+           --backtitle "Instalador de Arch Linux" \
+           --title "Error" \
+           --msgbox "No se pudo establecer una conexión a Internet. La instalación no puede continuar." \
+           7 60 2>> "$ERROR_LOG"
+    return 1
 }
 
 # Verificar y instalar dependencias necesarias
 check_dependencies() {
+    log "INFO" "Verificando dependencias..."
     local deps=("dialog" "iwd" "ip")
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" >/dev/null 2>&1; then
+            log "WARN" "Dependencia faltante: $dep. Intentando instalar..."
             pacman -Sy "$dep" --noconfirm
+            if [ $? -ne 0 ]; then
+                log "ERROR" "No se pudo instalar $dep"
+                return 1
+            fi
+            log "INFO" "$dep instalado correctamente"
+        else
+            log "INFO" "Dependencia $dep ya está instalada"
         fi
     done
 }
@@ -436,13 +597,27 @@ install_additional_packages() {
 
 # Función principal
 main() {
+    log "INFO" "Iniciando el instalador de Arch Linux"
+    # Limpiar logs anteriores
+    : > "$LOG_FILE"
+    : > "$ERROR_LOG"
+    
+    # Verificar si se ejecuta como root
+    if [ "$EUID" -ne 0 ]; then
+        log "ERROR" "El script debe ejecutarse como root"
+        echo "Este script debe ejecutarse como root"
+        exit 1
+    fi
+    
   display_banner
   welcome
   
   select_language
   set_keyboard_layout
-  check_dependencies
-  check_internet_connection
+  check_dependencies || exit 1
+  check_internet_connection || exit 1
+
+  log "INFO" "Instalación completada exitosamente"
   
   detect_windows_installation
   

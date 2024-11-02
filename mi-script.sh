@@ -32,42 +32,40 @@ display_banner() {
   echo
 }
 
-# Función para descargar y ejecutar el script desde GitHub
-download_and_run_script() {
-  echo "Descargando y ejecutando el script desde GitHub..."
+# Función para mostrar el progreso de la instalación
+show_progress() {
+  local current_step="$1"
+  local total_steps="$2"
+  local step_name="$3"
 
-  # Descargar el script usando curl
-  curl -s -L https://raw.githubusercontent.com/zeuspyEC/autoArchZ/main/mi-script.sh -o mi-script.sh
+  local progress_width=50
+  local progress=$((current_step * progress_width / total_steps))
+  local remaining=$((progress_width - progress))
 
-  # Ejecutar el script
-  bash mi-script.sh
+  printf "["
+  printf "%*s" "$progress" | tr ' ' '='
+  printf "%*s" "$remaining" | tr ' ' ' '
+  printf "] %s (%d/%d)\r" "$step_name" "$current_step" "$total_steps"
 }
 
-# Detectar UEFI o BIOS
-detect_boot_mode() {
-  if [ -d "/sys/firmware/efi/efivars" ]; then
-    echo "Modo de arranque: UEFI"
-    boot_mode="uefi"
-  else
-    echo "Modo de arranque: BIOS"
-    boot_mode="bios"
+# Función para obtener la lista de particiones
+get_partitions() {
+  local partitions=$(lsblk -n -o NAME,SIZE,TYPE -p | awk '/part|lvm/ {print $1, $2, $3}')
+
+  if [ -z "$partitions" ]; then
+    partitions=$(fdisk -l | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
   fi
-}
 
-# Detectar si existe una instalación de Windows
-detect_windows_installation() {
-  if [ -d "/mnt/windows" ]; then
-    windows_installed=true
-    echo "Se detectó una instalación de Windows."
-  else
-    windows_installed=false
-    echo "No se encontró una instalación de Windows."
+  if [ -z "$partitions" ]; then
+    partitions=$(parted -l | grep -E '^/dev/[[:alnum:]]+[[:digit:]]' | awk '{print $1, $3, $4}')
   fi
+
+  echo "$partitions"
 }
 
-# Mostrar particiones y solicitar al usuario seleccionar una para la instalación
+# Función para seleccionar la partición de instalación
 select_installation_partition() {
-  partitions=$(lsblk -n -o NAME,SIZE,TYPE -p | awk '/part|lvm/ {print $1, $2, $3}')
+  local partitions=$(get_partitions)
 
   partition_list=()
   while IFS= read -r line; do
@@ -89,7 +87,7 @@ select_installation_partition() {
   fi
 }
 
-# Particionar el disco (UEFI)
+# Función para particionar el disco (UEFI)
 partition_disk_uefi() {
   parted -s "$selected_partition" mklabel gpt
   parted -s "$selected_partition" mkpart primary fat32 1 512M
@@ -99,7 +97,7 @@ partition_disk_uefi() {
   mkfs.ext4 "${selected_partition}2"
 }
 
-# Particionar el disco (BIOS)
+# Función para particionar el disco (BIOS)
 partition_disk_bios() {
   parted -s "$selected_partition" mklabel msdos
   parted -s "$selected_partition" mkpart primary ext4 1 512M
@@ -109,31 +107,31 @@ partition_disk_bios() {
   mkfs.ext4 "${selected_partition}2"
 }
 
-# Montar particiones (UEFI)
+# Función para montar particiones (UEFI)
 mount_partitions_uefi() {
   mount "${selected_partition}2" /mnt
   mkdir -p /mnt/boot/efi
   mount "${selected_partition}1" /mnt/boot/efi
 }
 
-# Montar particiones (BIOS)
+# Función para montar particiones (BIOS)
 mount_partitions_bios() {
   mount "${selected_partition}2" /mnt
   mkdir -p /mnt/boot
   mount "${selected_partition}1" /mnt/boot
 }
 
-# Instalar sistema base
+# Función para instalar el sistema base
 install_base_system() {
   pacstrap /mnt base base-devel linux linux-firmware
 }
 
-# Generar fstab
+# Función para generar fstab
 generate_fstab() {
   genfstab -U /mnt >> /mnt/etc/fstab
 }
 
-# Configurar sistema
+# Función para configurar el sistema
 configure_system() {
   arch-chroot /mnt /bin/bash <<EOF
   ln -sf /usr/share/zoneinfo/America/Guayaquil /etc/localtime
@@ -150,7 +148,7 @@ configure_system() {
 EOF
 }
 
-# Instalar y configurar GRUB (UEFI)
+# Función para instalar y configurar GRUB (UEFI)
 install_grub_uefi() {
   arch-chroot /mnt /bin/bash <<EOF
   pacman -S --noconfirm grub efibootmgr
@@ -159,7 +157,7 @@ install_grub_uefi() {
 EOF
 }
 
-# Instalar y configurar GRUB (BIOS)
+# Función para instalar y configurar GRUB (BIOS)
 install_grub_bios() {
   arch-chroot /mnt /bin/bash <<EOF
   pacman -S --noconfirm grub
@@ -168,7 +166,7 @@ install_grub_bios() {
 EOF
 }
 
-# Configurar dual boot con Windows (UEFI)
+# Función para configurar dual boot con Windows (UEFI)
 configure_dual_boot_uefi() {
   if [ "$windows_installed" = true ]; then
     arch-chroot /mnt /bin/bash <<EOF
@@ -179,7 +177,7 @@ EOF
   fi
 }
 
-# Configurar dual boot con Windows (BIOS)
+# Función para configurar dual boot con Windows (BIOS)
 configure_dual_boot_bios() {
   if [ "$windows_installed" = true ]; then
     arch-chroot /mnt /bin/bash <<EOF
@@ -190,7 +188,7 @@ EOF
   fi
 }
 
-# Instalar y configurar window manager
+# Función para instalar y configurar el gestor de ventanas
 install_window_manager() {
   arch-chroot /mnt /bin/bash <<EOF
   pacman -S --noconfirm xorg-server xorg-xinit bspwm sxhkd

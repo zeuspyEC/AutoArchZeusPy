@@ -657,6 +657,7 @@ install_additional_packages() {
 }
 
 # Función principal
+# Función principal
 main() {
     log "INFO" "Iniciando el instalador de Arch Linux"
     # Limpiar logs anteriores
@@ -668,93 +669,86 @@ main() {
         log "ERROR" "El script debe ejecutarse como root"
         echo "Este script debe ejecutarse como root"
         exit 1
-    }
+    fi  # <-- Aquí estaba el error, era } en lugar de fi
     
-   # Verificar y preparar el sistema
+    # Verificar y preparar el sistema
     if ! check_dependencies; then
         log "ERROR" "Fallo en la verificación de dependencias"
         exit 1
-    } 
+    fi  # <-- Aquí también era } en lugar de fi
     
-  display_banner
-  welcome
-  
-  if ! select_language; then
+    display_banner
+    welcome
+    
+    if ! select_language; then
         log "ERROR" "Fallo en la selección de idioma"
         exit 1
-    }
+    fi
     
-  if ! set_keyboard_layout; then
+    if ! set_keyboard_layout; then
         log "ERROR" "Fallo en la configuración del teclado"
         exit 1
-    }
+    fi
     
-  if ! check_internet_connection; then
+    if ! check_internet_connection; then
         log "ERROR" "Fallo en la verificación de conexión a Internet"
         exit 1
-    }
+    fi
 
-
-  if ! detect_windows_installation; then
+    if ! detect_windows_installation; then
         log "ERROR" "Fallo en la verificación si hay otro SO como windows"
         exit 1
-    }
-  
-  if ! select_installation_partition; then
+    fi
+    
+    if ! select_installation_partition; then
         log "ERROR" "Fallo al seleccionar la partición para la instalación"
         exit 1
-    }
+    fi
 
-   if ! partition_disk; then
+    if ! partition_disk; then
         log "ERROR" "Fallo al realizar la partición para la instalación"
         exit 1
-    }
+    fi
 
-  if ! configure_swap; then
+    if ! configure_swap; then
         log "ERROR" "Fallo al configurar la particion SWAP"
         exit 1
-    }
+    fi
 
-  if ! mount_partitions; then
+    if ! mount_partitions; then
         log "ERROR" "Fallo al montar las particiones"
         exit 1
-    }
+    fi
 
-  if ! install_base_system; then
-        log "ERROR" "Fallo al realziar la base del sistema"
+    if ! install_base_system; then
+        log "ERROR" "Fallo al realizar la base del sistema"
         exit 1
-    }
+    fi
 
-  if ! generate_fstab; then
+    if ! generate_fstab; then
         log "ERROR" "fallo al generar la particion de fstab"
         exit 1
-    }
-  
-  
-  configure_timezone
-  configure_language
-  configure_hostname
-  
-  install_bootloader
-  
-  create_user
-  install_desktop_environment
-  install_additional_packages
-      
-  log "INFO" "Instalación completada exitosamente"
-  
-  dialog --clear --backtitle "Instalador de Arch Linux" \
-         --title "Instalación completada" \
-         --msgbox "La instalación de Arch Linux se ha completado exitosamente. Puedes reiniciar tu sistema ahora." \
-         8 60
+    fi
+    
+    configure_timezone
+    configure_language
+    configure_hostname
+    
+    install_bootloader
+    
+    create_user
+    install_desktop_environment
+    install_additional_packages
+        
+    log "INFO" "Instalación completada exitosamente"
+    
+    dialog --clear --backtitle "Instalador de Arch Linux" \
+           --title "Instalación completada" \
+           --msgbox "La instalación de Arch Linux se ha completado exitosamente. Puedes reiniciar tu sistema ahora." \
+           8 60
 
-  umount -R /mnt
-  reboot
+    umount -R /mnt
+    reboot
 }
-
-if [ "$EUID" -ne 0 ]; then
-    echo "Este script debe ejecutarse como root"
-    exit 1
-fi
 
 main "$@"

@@ -124,7 +124,7 @@ check_system_requirements() {
     if [[ ${#available_disks[@]} -eq 0 ]]; then
         log "ERROR" "No se encontraron discos disponibles"
         return 1
-    }
+    fi  # <-- Aquí estaba el error, era } en lugar de fi
     
     # Verificar espacio en los discos disponibles
     local found_suitable_disk=false

@@ -346,162 +346,162 @@ verify_disk_space() {
     local disk_count=0
     local valid_disks=()
     while IFS= read -r disk_info; do
-        ((disk_count++))
-        local disk_name=$(echo "$disk_info" | awk '{print $1}')
-        local disk_size=$(blockdev --getsize64 "$disk_name" 2>/dev/null)
-        local disk_model=$(echo "$disk_info" | awk '{$1=$2=$3=""; print $0}' | xargs)
-        
-        if ((disk_size >= min_space)); then
-            echo -e "${GREEN}$disk_count. $disk_name - $(numfmt --to=iec --suffix=B "$size") - $disk_model${NC}"
-            valid_disks+=("$disk_name")
-        else
-            echo -e "${ERROR}$disk_count. $disk_name - $(numfmt --to=iec --suffix=B "$size") - $disk_model (Espacio insuficiente)${NC}"
-        fi
+    ((disk_count++))
+    local disk_name=$(echo "$disk_info" | awk '{print $1}')
+    local disk_size=$(blockdev --getsize64 "$disk_name" 2>/dev/null)
+    local disk_model=$(echo "$disk_info" | awk '{$1=$2=$3=""; print $0}' | xargs)
+    
+    if ((disk_size >= min_space)); then
+        echo -e "${GREEN}$disk_count. $disk_name - $(format_size "$disk_size") - $disk_model${NC}"
+        valid_disks+=("$disk_name")
+    else
+        echo -e "${ERROR}$disk_count. $disk_name - $(format_size "$disk_size") - $disk_model (Espacio insuficiente)${NC}"
+    fi
     done <<< "$disk_list"
     
     if ((${#valid_disks[@]} == 0)); then
         log "ERROR" "No se encontró ningún disco con suficiente espacio (mínimo 15GB)"
         return 1
     fi
-    
+
     return 0
-}
+    }
 
 check_network_connectivity() {
-    log "INFO" "Verificando conectividad de red"
-    
-    local test_hosts=("archlinux.org" "google.com" "cloudflare.com")
-    local connected=false
-    
-    echo -e "\n${PURPLE}Probando conectividad:${NC}\n"
-    
-    for host in "${test_hosts[@]}"; do
-        echo -ne "${INFO]}Probando conexión a $host... ${NC}"
-        if ping -c 1 -W 5 "$host" &>/dev/null; then
-            echo -e "${GREEN}✔${NC}"
-            connected=true
-            break
-        else
-            echo -e "${ERROR}✘${NC}"
-        fi
-    done
-    
-    if ! $connected; then
-        log "WARN" "No hay conexión a Internet. Intentando configurar red..."
-        setup_network_connection
-        return $?
+log "INFO" "Verificando conectividad de red"
+
+local test_hosts=("archlinux.org" "google.com" "cloudflare.com")
+local connected=false
+
+echo -e "\n${PURPLE}Probando conectividad:${NC}\n"
+
+for host in "${test_hosts[@]}"; do
+    echo -ne "${INFO}Probando conexión a $host... ${NC}"
+    if ping -c 1 -W 5 "$host" &>/dev/null; then
+        echo -e "${GREEN}✔${NC}"
+        connected=true
+        break
+    else
+        echo -e "${ERROR}✘${NC}"
     fi
-    
-    log "SUCCESS" "Conectividad de red verificada"
-    return 0
+done
+
+if ! $connected; then
+    log "WARN" "No hay conexión a Internet. Intentando configurar red..."
+    setup_network_connection
+    return $?
+fi
+
+log "SUCCESS" "Conectividad de red verificada"
+return 0
 }
 
 setup_network_connection() {
-    log "INFO" "Configurando conexión de red"
-    
-    show_menu "Tipo de Conexión" \
-        "Conexión Wi-Fi" \
-        "Conexión Ethernet" \
-        "Salir"
-    
-    read -r option
-    
-    case $option in
-        1) setup_wifi_connection ;;
-        2) setup_ethernet_connection ;;
-        3) return 1 ;;
-        *) log "ERROR" "Opción inválida"; return 1 ;;
-    esac
+log "INFO" "Configurando conexión de red"
+
+show_menu "Tipo de Conexión" \
+    "Conexión Wi-Fi" \
+    "Conexión Ethernet" \
+    "Salir"
+
+read -r option
+
+case $option in
+    1) setup_wifi_connection ;;
+    2) setup_ethernet_connection ;;
+    3) return 1 ;;
+    *) log "ERROR" "Opción inválida"; return 1 ;;
+esac
 }
 
 setup_wifi_connection() {
-    log "INFO" "Configurando conexión Wi-Fi"
-    
-    local wireless_interfaces
-    wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]"))
-    
-    if ((${#wireless_interfaces[@]} == 0)); then
-        log "ERROR" "No se detectaron interfaces wireless"
-        return 1
-    fi
-    
-    echo -e "\n${PURPLE}Interfaces Wi-Fi disponibles:${NC}\n"
-    for i in "${!wireless_interfaces[@]}"; do
-        echo -e "${PRIMARY}$((i+1)). ${wireless_interfaces[$i]}${NC}"
-    done
-    
-    echo -e "\n${YELLOW}Seleccione una interfaz (1-${#wireless_interfaces[@]}): ${NC}"
-    read -r interface_number
-    
-    if ! [[ "$interface_number" =~ ^[0-9]+$ ]] || \
-       ((interface_number < 1 || interface_number > ${#wireless_interfaces[@]})); then
-        log "ERROR" "Selección inválida"
-        return 1
-    fi
-    
-    local selected_interface=${wireless_interfaces[$((interface_number-1))]}
-    
-    # Escanear redes
-    log "INFO" "Escaneando redes disponibles..."
-    iwctl station "$selected_interface" scan
-    sleep 2
-    
-    # Mostrar redes
-    echo -e "\n${PURPLE}Redes disponibles:${NC}\n"
-    iwctl station "$selected_interface" get-networks
-    
-    # Solicitar datos de conexión
-    echo -e "\n${YELLOW}Ingrese el nombre de la red (SSID): ${NC}"
-    read -r ssid
-    
-    echo -e "${YELLOW}Ingrese la contraseña: ${NC}"
-    read -rs password
-    
-    echo -e "\n${CYAN}Conectando a $ssid...${NC}"
-    
-    if iwctl station "$selected_interface" connect "$ssid" --passphrase "$password"; then
-        sleep 3
-        if ping -c 1 archlinux.org &>/dev/null; then
-            log "SUCCESS" "Conexión Wi-Fi establecida exitosamente"
-            return 0
-        fi
-    fi
-    
-    log "ERROR" "No se pudo establecer la conexión Wi-Fi"
+log "INFO" "Configurando conexión Wi-Fi"
+
+local wireless_interfaces
+wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]"))
+
+if ((${#wireless_interfaces[@]} == 0)); then
+    log "ERROR" "No se detectaron interfaces wireless"
     return 1
+fi
+
+echo -e "\n${PURPLE}Interfaces Wi-Fi disponibles:${NC}\n"
+for i in "${!wireless_interfaces[@]}"; do
+    echo -e "${PRIMARY}$((i+1)). ${wireless_interfaces[$i]}${NC}"
+done
+
+echo -e "\n${YELLOW}Seleccione una interfaz (1-${#wireless_interfaces[@]}): ${NC}"
+read -r interface_number
+
+if ! [[ "$interface_number" =~ ^[0-9]+$ ]] || \
+   ((interface_number < 1 || interface_number > ${#wireless_interfaces[@]})); then
+    log "ERROR" "Selección inválida"
+    return 1
+fi
+
+local selected_interface=${wireless_interfaces[$((interface_number-1))]}
+
+# Escanear redes
+log "INFO" "Escaneando redes disponibles..."
+iwctl station "$selected_interface" scan
+sleep 2
+
+# Mostrar redes
+echo -e "\n${PURPLE}Redes disponibles:${NC}\n"
+iwctl station "$selected_interface" get-networks
+
+# Solicitar datos de conexión
+echo -e "\n${YELLOW}Ingrese el nombre de la red (SSID): ${NC}"
+read -r ssid
+
+echo -e "${YELLOW}Ingrese la contraseña: ${NC}"
+read -rs password
+
+echo -e "\n${CYAN}Conectando a $ssid...${NC}"
+
+if iwctl station "$selected_interface" connect "$ssid" --passphrase "$password"; then
+    sleep 3
+    if ping -c 1 archlinux.org &>/dev/null; then
+        log "SUCCESS" "Conexión Wi-Fi establecida exitosamente"
+        return 0
+    fi
+fi
+
+log "ERROR" "No se pudo establecer la conexión Wi-Fi"
+return 1
 }
 
 setup_ethernet_connection() {
-    log "INFO" "Configurando conexión ethernet"
-    
-    local ethernet_interfaces
-    ethernet_interfaces=($(ip -br addr show | grep -E "^[0-9]+: en|^[0-9]+: eth" | cut -d: -f2))
-    
-    if ((${#ethernet_interfaces[@]} == 0)); then
-        log "ERROR" "No se detectaron interfaces ethernet"
-        return 1
-    fi
-    
-    echo -e "\n${PURPLE}Interfaces Ethernet disponibles:${NC}\n"
-    
-    for interface in "${ethernet_interfaces[@]}"; do
-        interface=$(echo "$interface" | tr -d ' ')
-        echo -ne "${CYAN}Configurando $interface... ${NC}"
-        
-        ip link set "$interface" up
-        if dhcpcd "$interface"; then
-            sleep 3
-            if ping -c 1 archlinux.org &>/dev/null; then
-                echo -e "${GREEN}✔${NC}"
-                log "SUCCESS" "Conexión ethernet establecida"
-                return 0
-            fi
-        fi
-        echo -e "${ERROR}✘${NC}"
-    done
-    
-    log "ERROR" "No se pudo establecer conexión ethernet"
+log "INFO" "Configurando conexión ethernet"
+
+local ethernet_interfaces
+ethernet_interfaces=($(ip -br addr show | grep -E "^[0-9]+: en|^[0-9]+: eth" | cut -d: -f2))
+
+if ((${#ethernet_interfaces[@]} == 0)); then
+    log "ERROR" "No se detectaron interfaces ethernet"
     return 1
+fi
+
+echo -e "\n${PURPLE}Interfaces Ethernet disponibles:${NC}\n"
+
+for interface in "${ethernet_interfaces[@]}"; do
+    interface=$(echo "$interface" | tr -d ' ')
+    echo -ne "${CYAN}Configurando $interface... ${NC}"
+    
+    ip link set "$interface" up
+    if dhcpcd "$interface"; then
+        sleep 3
+        if ping -c 1 archlinux.org &>/dev/null; then
+            echo -e "${GREEN}✔${NC}"
+            log "SUCCESS" "Conexión ethernet establecida"
+            return 0
+        fi
+    fi
+    echo -e "${ERROR}✘${NC}"
+done
+
+log "ERROR" "No se pudo establecer conexión ethernet"
+return 1
 }
 
 # ==============================================================================
@@ -509,257 +509,308 @@ setup_ethernet_connection() {
 # ==============================================================================
 
 prepare_disk() {
-    log "INFO" "Preparando disco para instalación"
-    
-    # Seleccionar disco
-    select_installation_disk
-    
-    # Verificar si hay sistemas operativos existentes
-    check_existing_os
-    
-    # Mostrar advertencia de borrado
-    show_warning_message
-    
-    # Crear particiones según el modo de arranque
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        create_uefi_partitions
-    else
-        create_bios_partitions
-    fi
-    
-    # Verificar particiones creadas
-    verify_partitions
-    
-    return 0
+log "INFO" "Preparando disco para instalación"
+
+# Seleccionar disco
+select_installation_disk
+
+# Verificar si hay sistemas operativos existentes
+check_existing_os
+
+# Mostrar advertencia de borrado
+show_warning_message
+
+# Crear particiones según el modo de arranque
+if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    create_uefi_partitions
+else
+    create_bios_partitions
+fi
+
+# Verificar particiones creadas
+verify_partitions
+
+return 0
 }
 
 select_installation_disk() {
-    local disk_list
-    disk_list=$(lsblk -o NAME,SIZE,TYPE,MOUNTPOINT --noheadings | grep disk)
+local disk_list
+disk_list=$(lsblk -o NAME,SIZE,TYPE,MOUNTPOINT --noheadings | grep disk)
+
+echo -e "\n${PURPLE}Discos disponibles para instalación:${NC}\n"
+
+local disk_array=()
+while IFS= read -r disk_info; do
+    disk_array+=("$disk_info")
+    local number=$((${#disk_array[@]}))
+    echo -e "${PRIMARY}$number. ${CYAN}$disk_info${NC}"
+done <<< "$disk_list"
+
+while true; do
+    echo -e "\n${YELLOW}Seleccione el disco para la instalación (1-${#disk_array[@]}): ${NC}"
+    read -r selection
     
-    echo -e "\n${PURPLE}Discos disponibles para instalación:${NC}\n"
-    
-    local disk_array=()
-    while IFS= read -r disk_info; do
-        disk_array+=("$disk_info")
-        local number=$((${#disk_array[@]}))
-        echo -e "${PRIMARY}$number. ${CYAN}$disk_info${NC}"
-    done <<< "$disk_list"
-    
-    while true; do
-        echo -e "\n${YELLOW}Seleccione el disco para la instalación (1-${#disk_array[@]}): ${NC}"
-        read -r selection
-        
-        if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection > 0 && selection <= ${#disk_array[@]})); then
-            TARGET_DISK=$(echo "${disk_array[$((selection-1))]}" | awk '{print $1}')
-            break
-        fi
-        echo -e "${ERROR}Selección inválida${NC}"
-    done
-    
-    log "INFO" "Disco seleccionado: $TARGET_DISK"
+    if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection > 0 && selection <= ${#disk_array[@]})); then
+        TARGET_DISK=$(echo "${disk_array[$((selection-1))]}" | awk '{print $1}')
+        break
+    fi
+    echo -e "${ERROR}Selección inválida${NC}"
+done
+
+log "INFO" "Disco seleccionado: $TARGET_DISK"
 }
 
 check_existing_os() {
-    echo -e "\n${PURPLE}Verificando sistemas operativos existentes:${NC}\n"
+echo -e "\n${PURPLE}Verificando sistemas operativos existentes:${NC}\n"
+
+if command -v os-prober &>/dev/null; then
+    local existing_os
+    existing_os=$(os-prober | grep "$TARGET_DISK" || true)
     
-    if command -v os-prober &>/dev/null; then
-        local existing_os
-        existing_os=$(os-prober | grep "$TARGET_DISK" || true)
-        
-        if [[ -n "$existing_os" ]]; then
-            echo -e "${WARNING}¡Se encontraron los siguientes sistemas operativos!${NC}"
-            echo -e "$existing_os" | while IFS= read -r os; do
-                echo -e "${WARNING}► $os${NC}"
-            done
-        else
-            echo -e "${CYAN}No se encontraron otros sistemas operativos${NC}"
-        fi
+    if [[ -n "$existing_os" ]]; then
+        echo -e "${WARNING}¡Se encontraron los siguientes sistemas operativos!${NC}"
+        echo -e "$existing_os" | while IFS= read -r os; do
+            echo -e "${WARNING}► $os${NC}"
+        done
+    else
+        echo -e "${CYAN}No se encontraron otros sistemas operativos${NC}"
     fi
+fi
 }
 
 show_warning_message() {
-    echo -e "\n${ERROR}¡ADVERTENCIA!${NC}"
-    echo -e "${ERROR}Esta operación eliminará TODOS los datos en $TARGET_DISK${NC}"
-    echo -e "${ERROR}Esta acción NO se puede deshacer${NC}\n"
+echo -e "\n${ERROR}¡ADVERTENCIA!${NC}"
+echo -e "${ERROR}Esta operación eliminará TODOS los datos en $TARGET_DISK${NC}"
+echo -e "${ERROR}Esta acción NO se puede deshacer${NC}\n"
+
+while true; do
+    echo -e "${YELLOW}¿Está seguro que desea continuar? (si/NO): ${NC}"
+    read -r response
     
-    while true; do
-        echo -e "${YELLOW}¿Está seguro que desea continuar? (si/NO): ${NC}"
-        read -r response
-        
-        case "$response" in
-            [Ss][Ii]) break ;;
-            [Nn][Oo]|"") log "INFO" "Operación cancelada por el usuario"; exit 1 ;;
-            *) echo -e "${ERROR}Por favor responda 'si' o 'no'${NC}" ;;
-        esac
-    done
+    case "$response" in
+        [Ss][Ii]) break ;;
+        [Nn][Oo]|"") log "INFO" "Operación cancelada por el usuario"; exit 1 ;;
+        *) echo -e "${ERROR}Por favor responda 'si' o 'no'${NC}" ;;
+    esac
+done
 }
 
 create_uefi_partitions() {
-    log "INFO" "Creando particiones UEFI"
+log "INFO" "Creando particiones UEFI"
 
-    # Calcular tamaños
-    local disk_size
-    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
-    local efi_size=512
-    local swap_size
-    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-    local root_size=$((disk_size - efi_size - swap_size))
+# Calcular tamaños
+local disk_size
+disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+local efi_size=512
+local swap_size
+swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+local root_size=$((disk_size - efi_size - swap_size))
 
-    # Crear tabla de particiones GPT
-    if ! parted -s "$TARGET_DISK" mklabel gpt; then
-        log "ERROR" "Fallo al crear tabla GPT"
-        return 1
+# Verificar espacio libre
+local free_space
+free_space=$(parted "$TARGET_DISK" print free | grep "Free Space" | tail -n1)
+
+if [[ -n "$free_space" ]]; then
+    echo -e "${GREEN}Se encontró espacio libre en $TARGET_DISK:${NC}"
+    echo "$free_space"
+    
+    echo -e "${BLUE}¿Desea usar este espacio libre para la instalación? (s/N):${NC}"
+    read -r use_free_space
+    
+    if [[ "$use_free_space" =~ ^[Ss]$ ]]; then
+        # Usar espacio libre existente
+        local start_sector=$(echo "$free_space" | awk '{print $1}')
+        local end_sector=$(echo "$free_space" | awk '{print $2}')
+        create_partitions_in_free_space "$TARGET_DISK" "$start_sector" "$end_sector"
+        return $?
     fi
+fi
 
-    # Crear particiones
-    if ! parted -s "$TARGET_DISK" \
-        mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
-        set 1 esp on \
-        mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
-        mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%; then
-        log "ERROR" "Fallo al crear particiones UEFI"
-        return 1
-    fi
+# Crear tabla de particiones GPT
+if ! parted -s "$TARGET_DISK" mklabel gpt; then
+    log "ERROR" "Fallo al crear tabla GPT"
+    return 1
+fi
 
-    # Esperar a que el kernel detecte las nuevas particiones
-    sleep 2
+# Crear particiones
+if ! parted -s "$TARGET_DISK" \
+    mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
+    set 1 esp on \
+    mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
+    mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%; then
+    log "ERROR" "Fallo al crear particiones UEFI"
+    return 1
+fi
 
-    # Obtener nombres de las particiones
-    local efi_part="${TARGET_DISK}1"
-    local root_part="${TARGET_DISK}2"
-    local swap_part="${TARGET_DISK}3"
+# Esperar a que el kernel detecte las nuevas particiones
+sleep 2
 
-    # Formatear particiones
-    if ! mkfs.fat -F32 "$efi_part"; then
-        log "ERROR" "Fallo al formatear partición EFI"
-        return 1
-    fi
+# Obtener nombres de las particiones
+local efi_part="${TARGET_DISK}1"
+local root_part="${TARGET_DISK}2"
+local swap_part="${TARGET_DISK}3"
 
-    if ! mkfs.ext4 -F "$root_part"; then
-        log "ERROR" "Fallo al formatear partición ROOT"
-        return 1
-    fi
+# Formatear particiones
+if ! mkfs.fat -F32 "$efi_part"; then
+    log "ERROR" "Fallo al formatear partición EFI"
+    return 1
+fi
 
-    if ! mkswap "$swap_part"; then
-        log "ERROR" "Fallo al formatear partición SWAP"
-        return 1
-    fi
-    if ! swapon "$swap_part"; then
-        log "ERROR" "Fallo al activar SWAP"
-        return 1
-    fi
+if ! mkfs.ext4 -F "$root_part"; then
+    log "ERROR" "Fallo al formatear partición ROOT"
+    return 1
+fi
 
-    # Montar particiones
-    if ! mount "$root_part" /mnt; then
-        log "ERROR" "Fallo al montar partición ROOT"
-        return 1
-    fi
+if ! mkswap "$swap_part"; then
+    log "ERROR" "Fallo al formatear partición SWAP"
+    return 1
+fi
+if ! swapon "$swap_part"; then
+    log "ERROR" "Fallo al activar SWAP"
+    return 1
+fi
 
-    if ! mkdir -p /mnt/boot/efi; then
-        log "ERROR" "Fallo al crear directorio EFI"
-        return 1
-    fi
-    if ! mount "$efi_part" /mnt/boot/efi; then
-        log "ERROR" "Fallo al montar partición EFI"
-        return 1
-    fi
+# Montar particiones
+if ! mount "$root_part" /mnt; then
+    log "ERROR" "Fallo al montar partición ROOT"
+    return 1
+fi
 
-    log "SUCCESS" "Particionamiento UEFI completado exitosamente"
-    return 0
+if ! mkdir -p /mnt/boot/efi; then
+    log "ERROR" "Fallo al crear directorio EFI"
+    return 1
+fi
+if ! mount "$efi_part" /mnt/boot/efi; then
+    log "ERROR" "Fallo al montar partición EFI"
+    return 1
+fi
+
+log "SUCCESS" "Particionamiento UEFI completado exitosamente"
+return 0
+}
+
+create_partitions_in_free_space() {
+local disk="$1"
+local start="$2"
+local end="$3"
+
+log "INFO" "Creando particiones en espacio libre: $start - $end"
+
+# Calcular tamaños
+local total_space=$(($end - $start))
+local swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+local min_space=15360  # 15GB en MB
+
+if [[ "$total_space" -lt "$min_space" ]]; then
+    log "ERROR" "Espacio libre insuficiente"
+    return 1
+fi
+
+if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    # Crear particiones UEFI en espacio libre
+    parted -s "$disk" mkpart ESP fat32 "$start" "$((start + 512))MiB" set 1 esp on
+    parted -s "$disk" mkpart primary ext4 "$((start + 512))MiB" "$((end - swap_size))MiB"
+    parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
+else
+    # Crear particiones BIOS en espacio libre
+    parted -s "$disk" mkpart primary ext4 "$start" "$((end - swap_size))MiB"
+    parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
+fi
+
+return 0
 }
 
 create_bios_partitions() {
-    log "INFO" "Creando particiones BIOS"
+log "INFO" "Creando particiones BIOS"
 
-    # Calcular tamaños
-    local disk_size
-    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
-    local boot_size=512
-    local swap_size
-    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-    local root_size=$((disk_size - boot_size - swap_size))
+# Calcular tamaños
+local disk_size
+disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+local boot_size=512
+local swap_size
+swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+local root_size=$((disk_size - boot_size - swap_size))
 
-    # Crear tabla de particiones MBR
-    if ! parted -s "$TARGET_DISK" mklabel msdos; then
-        log "ERROR" "Fallo al crear tabla MBR"
-        return 1
-    fi
+# Crear tabla de particiones MBR
+if ! parted -s "$TARGET_DISK" mklabel msdos; then
+    log "ERROR" "Fallo al crear tabla MBR"
+    return 1
+fi
 
-    # Crear particiones
-    if ! parted -s "$TARGET_DISK" \
-        mkpart primary ext4 1MiB "${boot_size}MiB" \
-        set 1 boot on \
-        mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
-        mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%; then
-        log "ERROR" "Fallo al crear particiones BIOS"
-        return 1
-    fi
-    
-    # Obtener nombres de las particiones
-    local boot_part="${TARGET_DISK}1"
-    local root_part="${TARGET_DISK}2"
-    local swap_part="${TARGET_DISK}3"
+# Crear particiones
+if ! parted -s "$TARGET_DISK" \
+    mkpart primary ext4 1MiB "${boot_size}MiB" \
+    set 1 boot on \
+    mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
+    mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%; then
+    log "ERROR" "Fallo al crear particiones BIOS"
+    return 1
+fi
 
-    # Formatear particiones
-    if ! mkfs.ext4 -F "$boot_part" || \
-       ! mkfs.ext4 -F "$root_part" || \
-       ! mkswap "$swap_part" || \
-       ! swapon "$swap_part"; then
-        log "ERROR" "Fallo al formatear particiones"
-        return 1
-    fi
+# Obtener nombres de las particiones
+local boot_part="${TARGET_DISK}1"
+local root_part="${TARGET_DISK}2"
+local swap_part="${TARGET_DISK}3"
 
-    # Montar particiones
-    if ! mount "$root_part" /mnt; then
-        log "ERROR" "Fallo al montar partición ROOT"
-        return 1
-    fi
-    if ! mkdir -p /mnt/boot; then
-        log "ERROR" "Fallo al crear directorio BOOT"
-        return 1
-    fi
-    if ! mount "$boot_part" /mnt/boot; then
-        log "ERROR" "Fallo al montar partición BOOT"
-        return 1
-    fi
+# Formatear particiones
+if ! mkfs.ext4 -F "$boot_part" || \
+   ! mkfs.ext4 -F "$root_part" || \
+   ! mkswap "$swap_part" || \
+   ! swapon "$swap_part"; then
+    log "ERROR" "Fallo al formatear particiones"
+    return 1
+fi
 
-    log "SUCCESS" "Particionamiento BIOS completado exitosamente"
-    return 0
+# Montar particiones
+if ! mount "$root_part" /mnt; then
+    log "ERROR" "Fallo al montar partición ROOT"
+    return 1
+fi
+if ! mkdir -p /mnt/boot; then
+    log "ERROR" "Fallo al crear directorio BOOT"
+    return 1
+fi
+if ! mount "$boot_part" /mnt/boot; then
+    log "ERROR" "Fallo al montar partición BOOT"
+    return 1
+fi
+
+log "SUCCESS" "Particionamiento BIOS completado exitosamente"
+return 0
 }
 
 verify_partitions() {
-    log "INFO" "Verificando particiones creadas"
-    
-    echo -e "\n${PURPLE}Particiones creadas:${NC}\n"
-    lsblk "$TARGET_DISK" -o NAME,SIZE,TYPE,MOUNTPOINT
-    
-    # Verificar puntos de montaje
-    if ! mountpoint -q /mnt; then
-        log "ERROR" "Punto de montaje ROOT no está montado correctamente"
+log "INFO" "Verificando particiones creadas"
+
+echo -e "\n${PURPLE}Particiones creadas:${NC}\n"
+lsblk "$TARGET_DISK" -o NAME,SIZE,TYPE,MOUNTPOINT
+
+# Verificar puntos de montaje
+if ! mountpoint -q /mnt; then
+    log "ERROR" "Punto de montaje ROOT no está montado correctamente"
+    return 1
+fi
+
+if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    if ! mountpoint -q /mnt/boot/efi; then
+        log "ERROR" "Punto de montaje EFI no está montado correctamente"
         return 1
     fi
-    
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        if ! mountpoint -q /mnt/boot/efi; then
-            log "ERROR" "Punto de montaje EFI no está montado correctamente"
-            return 1
-        fi
-    else
-        if ! mountpoint -q /mnt/boot; then
-            log "ERROR" "Punto de montaje BOOT no está montado correctamente"
-            return 1
-        fi
-    fi
-    
-    # Verificar swap
-    if ! swapon --show | grep -q "$TARGET_DISK"; then
-        log "ERROR" "SWAP no está activado correctamente"
+else
+    if ! mountpoint -q /mnt/boot; then
+        log "ERROR" "Punto de montaje BOOT no está montado correctamente"
         return 1
     fi
-    
-    log "SUCCESS" "Verificación de particiones completada"
-    return 0
+fi
+
+# Verificar swap
+if ! swapon --show | grep -q "$TARGET_DISK"; then
+    log "ERROR" "SWAP no está activado correctamente"
+    return 1
+fi
+
+log "SUCCESS" "Verificación de particiones completada"
+return 0
 }
 
 # ==============================================================================
@@ -767,355 +818,355 @@ verify_partitions() {
 # ==============================================================================
 
 install_base_system() {
-    log "INFO" "Iniciando instalación del sistema base"
-    
-    # Actualizar mirrors
-    update_mirrors
-    
-    # Instalar sistema base
-    echo -e "\n${PURPLE}Instalando paquetes base:${NC}\n"
-    local total_packages=${#REQUIRED_PACKAGES[@]}
-    local current=0
-    
-    for package in "${REQUIRED_PACKAGES[@]}"; do
-        ((current++))
-        echo -ne "${CYAN}Instalando $package... ${NC}"
-        if pacstrap /mnt "$package" &>/dev/null; then
-            echo -e "${GREEN}✔${NC}"
-        else
-            echo -e "${ERROR}✘${NC}"
-            log "ERROR" "Fallo al instalar $package"
-            return 1
-        fi
-        show_progress "$current" "$total_packages"
-        echo
-    done
-    
-    # Generar fstab
-    echo -ne "\n${CYAN}Generando fstab... ${NC}"
-    if ! genfstab -U /mnt >> /mnt/etc/fstab; then
+log "INFO" "Iniciando instalación del sistema base"
+
+# Actualizar mirrors
+update_mirrors
+
+# Instalar sistema base
+echo -e "\n${PURPLE}Instalando paquetes base:${NC}\n"
+local total_packages=${#REQUIRED_PACKAGES[@]}
+local current=0
+
+for package in "${REQUIRED_PACKAGES[@]}"; do
+    ((current++))
+    echo -ne "${CYAN}Instalando $package... ${NC}"
+    if pacstrap /mnt "$package" &>/dev/null; then
+        echo -e "${GREEN}✔${NC}"
+    else
         echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al generar fstab"
+        log "ERROR" "Fallo al instalar $package"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
-    # Verificar fstab
-    if ! grep -q "UUID" /mnt/etc/fstab; then
-        log "ERROR" "fstab generado incorrectamente"
-        return 1
-    fi
-    
-    log "SUCCESS" "Sistema base instalado correctamente"
-    return 0
+    show_progress "$current" "$total_packages"
+    echo
+done
+
+# Generar fstab
+echo -ne "\n${CYAN}Generando fstab... ${NC}"
+if ! genfstab -U /mnt >> /mnt/etc/fstab; then
+    echo -e "${ERROR}✘${NC}"
+    log "ERROR" "Fallo al generar fstab"
+    return 1
+fi
+echo -e "${GREEN}✔${NC}"
+
+# Verificar fstab
+if ! grep -q "UUID" /mnt/etc/fstab; then
+    log "ERROR" "fstab generado incorrectamente"
+    return 1
+fi
+
+log "SUCCESS" "Sistema base instalado correctamente"
+return 0
 }
 
 update_mirrors() {
-    log "INFO" "Actualizando lista de mirrors"
+log "INFO" "Actualizando lista de mirrors"
 
-    # Respaldar el mirrorlist actual
-    if ! cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.backup; then
-        log "ERROR" "Fallo al respaldar el mirrorlist actual"
-        return 1
-    fi
-
-    # Intentar usar reflector para optimizar los mirrors
-    if command -v reflector &>/dev/null; then
-        if ! reflector --latest 20 \
-                      --protocol https \
-                      --sort rate \
-                      --save /etc/pacman.d/mirrorlist; then
-            log "WARN" "Fallo al actualizar los mirrors con reflector, usando lista por defecto"
-        else
-            log "SUCCESS" "Mirrorlist actualizado correctamente"
-            return 0
-        fi
-    else
-        log "WARN" "reflector no está instalado, usando mirrors por defecto"
-    fi
-
+# Respaldar el mirrorlist actual
+if ! cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.backup; then
+    log "ERROR" "Fallo al respaldar el mirrorlist actual"
     return 1
+fi
+
+# Intentar usar reflector para optimizar los mirrors
+if command -v reflector &>/dev/null; then
+    if ! reflector --latest 20 \
+                  --protocol https \
+                  --sort rate \
+                  --save /etc/pacman.d/mirrorlist; then
+        log "WARN" "Fallo al actualizar los mirrors con reflector, usando lista por defecto"
+    else
+        log "SUCCESS" "Mirrorlist actualizado correctamente"
+        return 0
+    fi
+else
+    log "WARN" "reflector no está instalado, usando mirrors por defecto"
+fi
+
+return 1
 }
 
 configure_system() {
-    log "INFO" "Iniciando configuración del sistema"
-    
-    local config_functions=(
-        "configure_hostname"
-        "configure_timezone"
-        "configure_locale"
-        "configure_users"
-        "configure_network"
-        "configure_bootloader"
-    )
-    
-    local total_steps=${#config_functions[@]}
-    local current=0
-    
-    for func in "${config_functions[@]}"; do
-        ((current++))
-        echo -e "\n${PURPLE}[${current}/${total_steps}] Ejecutando: ${func//_/ }${NC}"
-        if ! $func; then
-            log "ERROR" "Fallo en $func"
-            return 1
-        fi
-        show_progress "$current" "$total_steps"
-        echo
-    done
-    
-    log "SUCCESS" "Configuración del sistema completada"
-    return 0
+log "INFO" "Iniciando configuración del sistema"
+
+local config_functions=(
+    "configure_hostname"
+    "configure_timezone"
+    "configure_locale"
+    "configure_users"
+    "configure_network"
+    "configure_bootloader"
+)
+
+local total_steps=${#config_functions[@]}
+local current=0
+
+for func in "${config_functions[@]}"; do
+    ((current++))
+    echo -e "\n${PURPLE}[${current}/${total_steps}] Ejecutando: ${func//_/ }${NC}"
+    if ! $func; then
+        log "ERROR" "Fallo en $func"
+        return 1
+    fi
+    show_progress "$current" "$total_steps"
+    echo
+done
+
+log "SUCCESS" "Configuración del sistema completada"
+return 0
 }
 
 configure_hostname() {
-    echo -e "${YELLOW}Ingrese el hostname para el sistema: ${NC}"
-    while true; do
-        read -r HOSTNAME
-        
-        if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
-            break
-        else
-            echo -e "${ERROR}Hostname inválido. Use solo letras, números y guiones${NC}"
-            echo -e "${YELLOW}Intente nuevamente: ${NC}"
-        fi
-    done
+echo -e "${YELLOW}Ingrese el hostname para el sistema: ${NC}"
+while true; do
+    read -r HOSTNAME
     
-    # Configurar hostname
-    echo "$HOSTNAME" > /mnt/etc/hostname
-    
-    # Configurar hosts
-    cat > /mnt/etc/hosts <<EOF
+    if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
+        break
+    else
+        echo -e "${ERROR}Hostname inválido. Use solo letras, números y guiones${NC}"
+        echo -e "${YELLOW}Intente nuevamente: ${NC}"
+    fi
+done
+
+# Configurar hostname
+echo "$HOSTNAME" > /mnt/etc/hostname
+
+# Configurar hosts
+cat > /mnt/etc/hosts <<EOF
 127.0.0.1   localhost
 ::1         localhost
 127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
 EOF
-    
-    log "SUCCESS" "Hostname configurado: $HOSTNAME"
-    return 0
+
+log "SUCCESS" "Hostname configurado: $HOSTNAME"
+return 0
 }
 
 configure_timezone() {
-    local zones
-    zones=($(find /usr/share/zoneinfo -type f -not -path '*/right/*' -not -path '*/posix/*' -printf '%P\n' | sort))
-    
-    echo -e "\n${PURPLE}Zonas horarias disponibles:${NC}\n"
-    
-    select TIMEZONE in "${zones[@]}"; do
-        if [[ -n "$TIMEZONE" ]]; then
-            break
-        fi
-        echo -e "${ERROR}Selección inválida${NC}"
-    done
-    
-    echo -ne "${CYAN}Configurando zona horaria $TIMEZONE... ${NC}"
-    if ! arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime; then
-        echo -e "${ERROR}✘${NC}"
-        return 1
+local zones
+zones=($(find /usr/share/zoneinfo -type f -not -path '*/right/*' -not -path '*/posix/*' -printf '%P\n' | sort))
+
+echo -e "\n${PURPLE}Zonas horarias disponibles:${NC}\n"
+
+select TIMEZONE in "${zones[@]}"; do
+    if [[ -n "$TIMEZONE" ]]; then
+        break
     fi
-    
-    if ! arch-chroot /mnt hwclock --systohc; then
-        echo -e "${ERROR}✘${NC}"
-        return 1
-    fi
-    echo -e "${GREEN}✔${NC}"
-    
-    return 0
+    echo -e "${ERROR}Selección inválida${NC}"
+done
+
+echo -ne "${CYAN}Configurando zona horaria $TIMEZONE... ${NC}"
+if ! arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime; then
+    echo -e "${ERROR}✘${NC}"
+    return 1
+fi
+
+if ! arch-chroot /mnt hwclock --systohc; then
+    echo -e "${ERROR}✘${NC}"
+    return 1
+fi
+echo -e "${GREEN}✔${NC}"
+
+return 0
 }
 
 configure_locale() {
-    echo -ne "${CYAN}Configurando locales... ${NC}"
-    
-    # Habilitar locales necesarios
-    sed -i 's/#\(en_US.UTF-8\)/\1/' /mnt/etc/locale.gen
-    sed -i 's/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
-    
-    # Generar locales
-    if ! arch-chroot /mnt locale-gen; then
-        echo -e "${ERROR}✘${NC}"
-        return 1
-    fi
-    
-    # Configurar idioma predeterminado
-    echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
-    echo "KEYMAP=es" > /mnt/etc/vconsole.conf
-    
-    echo -e "${GREEN}✔${NC}"
-    return 0
+echo -ne "${CYAN}Configurando locales... ${NC}"
+
+# Habilitar locales necesarios
+sed -i 's/#\(en_US.UTF-8\)/\1/' /mnt/etc/locale.gen
+sed -i 's/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
+
+# Generar locales
+if ! arch-chroot /mnt locale-gen; then
+    echo -e "${ERROR}✘${NC}"
+    return 1
+fi
+
+# Configurar idioma predeterminado
+echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
+echo "KEYMAP=es" > /mnt/etc/vconsole.conf
+
+echo -e "${GREEN}✔${NC}"
+return 0
 }
 
 configure_users() {
-    # Configurar root
-    echo -e "\n${PURPLE}Configuración de contraseña root${NC}"
-    while ! arch-chroot /mnt passwd; do
-        echo -e "${ERROR}Error al configurar contraseña root. Intente nuevamente${NC}"
-    done
+# Configurar root
+echo -e "\n${PURPLE}Configuración de contraseña root${NC}"
+while ! arch-chroot /mnt passwd; do
+    echo -e "${ERROR}Error al configurar contraseña root. Intente nuevamente${NC}"
+done
+
+# Crear usuario normal
+echo -e "\n${PURPLE}Creación de usuario normal${NC}"
+echo -e "${YELLOW}Ingrese nombre para el nuevo usuario: ${NC}"
+while true; do
+    read -r USERNAME
     
-    # Crear usuario normal
-    echo -e "\n${PURPLE}Creación de usuario normal${NC}"
-    echo -e "${YELLOW}Ingrese nombre para el nuevo usuario: ${NC}"
-    while true; do
-        read -r USERNAME
-        
-        if [[ "$USERNAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
-            break
-        else
-            echo -e "${ERROR}Nombre de usuario inválido. Use letras minúsculas, números y guiones${NC}"
-            echo -e "${YELLOW}Intente nuevamente: ${NC}"
-        fi
-    done
-    
-    # Crear usuario y agregar a grupos
-    if ! arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USERNAME"; then
-        log "ERROR" "Fallo al crear usuario"
-        return 1
+    if [[ "$USERNAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
+        break
+    else
+        echo -e "${ERROR}Nombre de usuario inválido. Use letras minúsculas, números y guiones${NC}"
+        echo -e "${YELLOW}Intente nuevamente: ${NC}"
     fi
-    
-    # Configurar contraseña del usuario
-    echo -e "\n${PURPLE}Configuración de contraseña para $USERNAME${NC}"
-    while ! arch-chroot /mnt passwd "$USERNAME"; do
-        echo -e "${ERROR}Error al configurar contraseña. Intente nuevamente${NC}"
-    done
-    
-    # Configurar sudo
-    echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
-    chmod 440 /mnt/etc/sudoers.d/wheel
-    
-    log "SUCCESS" "Usuarios configurados correctamente"
-    return 0
+done
+
+# Crear usuario y agregar a grupos
+if ! arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USERNAME"; then
+    log "ERROR" "Fallo al crear usuario"
+    return 1
+fi
+
+# Configurar contraseña del usuario
+echo -e "\n${PURPLE}Configuración de contraseña para $USERNAME${NC}"
+while ! arch-chroot /mnt passwd "$USERNAME"; do
+    echo -e "${ERROR}Error al configurar contraseña. Intente nuevamente${NC}"
+done
+
+# Configurar sudo
+echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
+chmod 440 /mnt/etc/sudoers.d/wheel
+
+log "SUCCESS" "Usuarios configurados correctamente"
+return 0
 }
 
 configure_network() {
-    echo -ne "${CYAN}Habilitando NetworkManager... ${NC}"
-    if ! arch-chroot /mnt systemctl enable NetworkManager; then
-        echo -e "${ERROR}✘${NC}"
-        return 1
-    fi
-    echo -e "${GREEN}✔${NC}"
-    return 0
+echo -ne "${CYAN}Habilitando NetworkManager... ${NC}"
+if ! arch-chroot /mnt systemctl enable NetworkManager; then
+    echo -e "${ERROR}✘${NC}"
+    return 1
+fi
+echo -e "${GREEN}✔${NC}"
+return 0
 }
 
 configure_bootloader() {
-    log "INFO" "Instalando y configurando bootloader"
+log "INFO" "Instalando y configurando bootloader"
 
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        # Instalar GRUB para UEFI
-        if ! arch-chroot /mnt grub-install --target=x86_64-efi \
-                                         --efi-directory=/boot/efi \
-                                         --bootloader-id=GRUB; then
-            log "ERROR" "Fallo al instalar GRUB (UEFI)"
-            return 1
-        fi
-    else
-        # Instalar GRUB para BIOS
-        if ! arch-chroot /mnt grub-install --target=i386-pc "$TARGET_DISK"; then
-            log "ERROR" "Fallo al instalar GRUB (BIOS)"
-            return 1
-        fi
-    fi
-
-    # Configurar GRUB
-    sed -i 's/#GRUB_DISABLE_OS_PROBER=false/GRUB_DISABLE_OS_PROBER=false/' /mnt/etc/default/grub
-
-    # Generar configuración de GRUB
-    if ! arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg; then
-        log "ERROR" "Fallo al generar configuración de GRUB"
+if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    # Instalar GRUB para UEFI
+    if ! arch-chroot /mnt grub-install --target=x86_64-efi \
+                                     --efi-directory=/boot/efi \
+                                     --bootloader-id=GRUB; then
+        log "ERROR" "Fallo al instalar GRUB (UEFI)"
         return 1
     fi
+else
+    # Instalar GRUB para BIOS
+    if ! arch-chroot /mnt grub-install --target=i386-pc "$TARGET_DISK"; then
+        log "ERROR" "Fallo al instalar GRUB (BIOS)"
+        return 1
+    fi
+fi
 
-    log "SUCCESS" "Bootloader GRUB configurado correctamente"
-    return 0
+# Configurar GRUB
+sed -i 's/#GRUB_DISABLE_OS_PROBER=false/GRUB_DISABLE_OS_PROBER=false/' /mnt/etc/default/grub
+
+# Generar configuración de GRUB
+if ! arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg; then
+    log "ERROR" "Fallo al generar configuración de GRUB"
+    return 1
+fi
+
+log "SUCCESS" "Bootloader GRUB configurado correctamente"
+return 0
 }
 
 cleanup() {
-    log "INFO" "Realizando limpieza final"
-    
-    echo -ne "${CYAN}Desmontando particiones... ${NC}"
-    
-    # Desmontar en orden inverso
-    if mountpoint -q /mnt/boot/efi; then
-        umount -R /mnt/boot/efi
-    fi
-    if mountpoint -q /mnt/boot; then
-        umount -R /mnt/boot
-    fi
-    if mountpoint -q /mnt; then
-        umount -R /mnt
-    fi
-    
-    # Desactivar swap
-    swapoff -a
-    
-    echo -e "${GREEN}✔${NC}"
-    log "SUCCESS" "Limpieza completada"
+log "INFO" "Realizando limpieza final"
+
+echo -ne "${CYAN}Desmontando particiones... ${NC}"
+
+# Desmontar en orden inverso
+if mountpoint -q /mnt/boot/efi; then
+    umount -R /mnt/boot/efi
+fi
+if mountpoint -q /mnt/boot; then
+    umount -R /mnt/boot
+fi
+if mountpoint -q /mnt; then
+    umount -R /mnt
+fi
+
+# Desactivar swap
+swapoff -a
+
+echo -e "${GREEN}✔${NC}"
+log "SUCCESS" "Limpieza completada"
 }
 
 # Función principal mejorada
 main() {
-    local start_time
-    start_time=$(date +%s)
-    
-    # Inicializar script
-    init_script
-    
-    # Pasos de instalación
-    local installation_steps=(
-        "check_system_requirements"
-        "check_network_connectivity"
-        "prepare_disk"
-        "install_base_system"
-        "configure_system"
-    )
-    
-    # Ejecutar pasos de instalación con progreso
-    local total_steps=${#installation_steps[@]}
-    local current=0
-    
-    for step in "${installation_steps[@]}"; do
-        ((current++))
-        echo -e "\n${HEADER}[${current}/${total_steps}] ${step//_/ }${NC}"
-        if ! $step; then
-            log "ERROR" "Instalación fallida en: $step"
-            cleanup
-            exit 1
-        fi
-        show_progress "$current" "$total_steps"
-        echo
-    done
-    
-    # Calcular tiempo de instalación
-    local end_time
-    end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    local minutes=$((duration / 60))
-    local seconds=$((duration % 60))
-    
-    # Mostrar resumen de instalación
-    echo -e "\n${PURPLE}Resumen de la Instalación${NC}"
-    echo -e "${GREEN}✔ Instalación completada exitosamente${NC}"
-    echo -e "${CYAN}• Tiempo total: ${minutes}m ${seconds}s${NC}"
-    echo -e "${CYAN}• Hostname: $HOSTNAME${NC}"
-    echo -e "${CYAN}• Usuario: $USERNAME${NC}"
-    echo -e "${CYAN}• Zona horaria: $TIMEZONE${NC}"
-    
-    # Preguntar por reinicio
-    echo -e "\n${YELLOW}¿Desea reiniciar el sistema ahora? (si/NO): ${NC}"
-    read -r reboot_choice
-    
-    if [[ "$reboot_choice" =~ ^[Ss][Ii]$ ]]; then
-        log "INFO" "Reiniciando sistema"
+local start_time
+start_time=$(date +%s)
+
+# Inicializar script
+init_script
+
+# Pasos de instalación
+local installation_steps=(
+    "check_system_requirements"
+    "check_network_connectivity"
+    "prepare_disk"
+    "install_base_system"
+    "configure_system"
+)
+
+# Ejecutar pasos de instalación con progreso
+local total_steps=${#installation_steps[@]}
+local current=0
+
+for step in "${installation_steps[@]}"; do
+    ((current++))
+    echo -e "\n${HEADER}[${current}/${total_steps}] ${step//_/ }${NC}"
+    if ! $step; then
+        log "ERROR" "Instalación fallida en: $step"
         cleanup
-        reboot
-    else
-        log "INFO" "Reinicio pospuesto"
-        cleanup
-        echo -e "${WARNING}Recuerde reiniciar el sistema cuando esté listo${NC}"
+        exit 1
     fi
+    show_progress "$current" "$total_steps"
+    echo
+done
+
+# Calcular tiempo de instalación
+local end_time
+end_time=$(date +%s)
+local duration=$((end_time - start_time))
+local minutes=$((duration / 60))
+local seconds=$((duration % 60))
+
+# Mostrar resumen de instalación
+echo -e "\n${PURPLE}Resumen de la Instalación${NC}"
+echo -e "${GREEN}✔ Instalación completada exitosamente${NC}"
+echo -e "${CYAN}• Tiempo total: ${minutes}m ${seconds}s${NC}"
+echo -e "${CYAN}• Hostname: $HOSTNAME${NC}"
+echo -e "${CYAN}• Usuario: $USERNAME${NC}"
+echo -e "${CYAN}• Zona horaria: $TIMEZONE${NC}"
+
+# Preguntar por reinicio
+echo -e "\n${YELLOW}¿Desea reiniciar el sistema ahora? (si/NO): ${NC}"
+read -r reboot_choice
+
+if [[ "$reboot_choice" =~ ^[Ss][Ii]$ ]]; then
+    log "INFO" "Reiniciando sistema"
+    cleanup
+    reboot
+else
+    log "INFO" "Reinicio pospuesto"
+    cleanup
+    echo -e "${WARNING}Recuerde reiniciar el sistema cuando esté listo${NC}"
+fi
 }
 
 # Iniciar instalación solo si se ejecuta como root
 if [[ $EUID -ne 0 ]]; then
-    echo -e "${ERROR}Este script debe ejecutarse como root${NC}"
-    exit 1
+echo -e "${ERROR}Este script debe ejecutarse como root${NC}"
+exit 1
 fi
 
 main "$@"

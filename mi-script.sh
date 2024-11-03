@@ -290,10 +290,10 @@ select_language() {
     log "INFO" "Seleccionando idioma"
     
     local languages=(
-        "en_US" "Inglés (Estados Unidos)"
-        "es_ES" "Español (España)"  
-        "fr_FR" "Francés (Francia)"
-        "de_DE" "Alemán (Alemania)"
+        "en_US.UTF-8" "Inglés (Estados Unidos)"
+        "es_ES.UTF-8" "Español (España)"  
+        "fr_FR.UTF-8" "Francés (Francia)"
+        "de_DE.UTF-8" "Alemán (Alemania)"
     )
     
     language=$(dialog_wrapper "Idioma" \
@@ -303,8 +303,13 @@ select_language() {
         "${languages[@]}" \
         3>&1 1>&2 2>&3) 
     
-    if [[ $? -ne 0 || -z "$language" ]]; then
+    if [[ $? -ne 0 ]]; then
         log "ERROR" "No se seleccionó un idioma válido"
+        return 1
+    fi
+    
+    if [[ -z "$language" ]]; then
+        log "ERROR" "No se proporcionó un idioma"
         return 1
     fi
     
@@ -515,6 +520,17 @@ mount_partitions() {
         # Montar partición root
         if ! execute_with_log mount "${selected_partition}1" /mnt; then
             log "ERROR" "Fallo al montar partición root"
+            return 1
+        fi
+        
+        # Crear y montar partición boot para BIOS
+        if ! execute_with_log mkdir -p /mnt/boot; then
+            log "ERROR" "Fallo al crear directorio boot"
+            return 1
+        fi
+        
+        if ! execute_with_log mount "${selected_partition}1" /mnt/boot; then
+            log "ERROR" "Fallo al montar partición boot"
             return 1
         fi
     fi

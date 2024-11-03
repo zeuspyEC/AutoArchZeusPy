@@ -112,18 +112,49 @@ log() {
 # Función para mostrar información del sistema
 # Función para mostrar información del sistema
 print_system_info() {
-    echo -e "${PURPLE}=== Información del Sistema ===${NC}"
-    {
-        printf "${WHITE}%-15s${NC} %s\n" "Kernel:" "$(uname -r)"
-        printf "${WHITE}%-15s${NC} %s\n" "CPU:" "$(grep "model name" /proc/cpuinfo | head -n1 | cut -d: -f2 | xargs)"
-        printf "${WHITE}%-15s${NC}\n" "Memoria:"
-        free -h | sed 's/^/    /'
-        printf "${WHITE}%-15s${NC}\n" "Disco:"
-        df -h | sed 's/^/    /'
-        printf "${WHITE}%-15s${NC}\n" "Red:"
-        ip -br addr show | sed 's/^/    /'
-        echo -e "${PURPLE}===========================${NC}"
-    } 2>/dev/null || true
+    echo -e "${PURPLE}╔══════════════════════════════════════╗${NC}"
+    echo -e "${PURPLE}║      Información del Sistema         ║${NC}"
+    echo -e "${PURPLE}╚══════════════════════════════════════╝${NC}"
+    
+    # Kernel
+    printf "${WHITE}%-12s${NC} : %s\n" "Kernel" "$(uname -r)"
+    
+    # CPU
+    local cpu_info
+    cpu_info=$(grep "model name" /proc/cpuinfo | head -n1 | cut -d: -f2 | xargs)
+    printf "${WHITE}%-12s${NC} : %s\n" "CPU" "$cpu_info"
+    
+    # Memoria
+    echo -e "\n${WHITE}Memoria:${NC}"
+    free -h | awk '
+        NR==1 {printf "%-12s %-10s %-10s %-10s %-10s\n", $1, $2, $3, $4, $7}
+        NR==2 {printf "%-12s %-10s %-10s %-10s %-10s\n", $1":", $2, $3, $4, $7}
+    ' | sed 's/^/  /'
+    
+    # Disco
+    echo -e "\n${WHITE}Disco:${NC}"
+    df -h | grep -E '^/dev|^Filesystem' | \
+        awk '{printf "  %-20s %-10s %-10s %-10s %-10s %s\n", $1, $2, $3, $4, $5, $6}'
+    
+    # Red
+    echo -e "\n${WHITE}Red:${NC}"
+    ip -br addr | awk '{printf "  %-10s %-15s %s\n", $1, $2, $3}'
+    
+    echo -e "\n${PURPLE}══════════════════════════════════════${NC}\n"
+}
+
+# Función para formatear tamaños
+format_size() {
+    local size=$1
+    local units=("B" "KB" "MB" "GB" "TB")
+    local unit=0
+    
+    while (( size > 1024 && unit < ${#units[@]} - 1 )); do
+        size=$(( size / 1024 ))
+        (( unit++ ))
+    done
+    
+    printf "%d %s" "$size" "${units[$unit]}"
 }
 
 # Función mejorada para ejecutar comandos con logging
@@ -171,8 +202,10 @@ show_progress() {
     local filled=$((width * current / total))
     local empty=$((width - filled))
     
-    printf "\r${CYAN}[%-${width}s] %d%%" "$(printf '%*s' "$filled" | tr ' ' '█')" "$percent"
-    echo -ne "${NC}"
+    printf "\r${CYAN}[${NC}"
+    printf "%${filled}s" | tr ' ' '█'
+    printf "%${empty}s" | tr ' ' '░'
+    printf "${CYAN}] %3d%%${NC}" "$percent"
 }
 
 # Inicialización del script

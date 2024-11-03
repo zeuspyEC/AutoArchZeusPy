@@ -9,28 +9,18 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Definir colores como variables simples
-RESET=$'\e[0m'
-BOLD=$'\e[1m'
-DIM=$'\e[2m'
-ITALIC=$'\e[3m'
-UNDERLINE=$'\e[4m'
-
-# Colores primarios optimizados para fondo negro
-PRIMARY=$'\e[38;2;72;185;255m'      # Azul brillante
-SUCCESS=$'\e[38;2;0;255;127m'       # Verde brillante
-WARNING=$'\e[38;2;255;185;0m'       # Naranja brillante
-ERROR=$'\e[38;2;255;85;85m'         # Rojo brillante
-INFO=$'\e[38;2;220;220;220m'        # Blanco suave
-
-# Colores especiales
-HEADER=$'\e[38;2;147;112;219m'      # Púrpura suave
-INPUT=$'\e[38;2;255;215;0m'         # Dorado
-HINT=$'\e[38;2;169;169;169m'        # Gris medio
-BANNER=$'\e[38;2;0;191;255m'        # Azul cielo brillante
+# Definición de colores (versión simple y probada)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+PURPLE='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'  # No Color
 
 # Variables globales
-declare -g SCRIPT_VERSION="3.0"
+declare -g SCRIPT_VERSION="3.0.1"
 declare -g BOOT_MODE=""
 declare -g TARGET_DISK=""
 declare -g HOSTNAME=""
@@ -76,6 +66,7 @@ EOF
 }
 
 # Función mejorada de logging
+# Función de logging mejorada
 log() {
     local level="$1"
     shift
@@ -89,33 +80,35 @@ log() {
     
     case "$level" in
         "DEBUG")
-            echo -e "${DIM}$log_entry${RESET}" >> "$DEBUG_LOG"
+            echo -e "${CYAN}$log_entry${NC}" >> "$DEBUG_LOG"
             ;;
         "INFO")
-            echo -e "${INFO}$log_entry${RESET}" | tee -a "$LOG_FILE"
+            echo -e "${GREEN}$log_entry${NC}" | tee -a "$LOG_FILE"
             ;;
         "SUCCESS")
-            echo -e "${SUCCESS}$log_entry${RESET}" | tee -a "$LOG_FILE"
+            echo -e "${GREEN}✔ $log_entry${NC}" | tee -a "$LOG_FILE"
             ;;
         "WARN")
-            echo -e "${WARNING}$log_entry${RESET}" | tee -a "$LOG_FILE"
+            echo -e "${YELLOW}⚠ $log_entry${NC}" | tee -a "$LOG_FILE"
             ;;
         "ERROR")
-            echo -e "${ERROR}$log_entry${RESET}" | tee -a "$ERROR_LOG"
+            echo -e "${RED}✘ $log_entry${NC}" | tee -a "$ERROR_LOG"
+            print_system_info >> "$ERROR_LOG"
             ;;
     esac
 }
 
 # Función para mostrar información del sistema
+# Función para mostrar información del sistema
 print_system_info() {
-    echo -e "${HEADER}=== Información del Sistema ===${RESET}"
+    echo -e "${PURPLE}=== Información del Sistema ===${NC}"
     {
-        echo -e "${INFO}Kernel:${RESET} $(uname -r)"
-        echo -e "${INFO}CPU:${RESET} $(grep "model name" /proc/cpuinfo | head -n1)"
-        echo -e "${INFO}Memoria:${RESET} $(free -h)"
-        echo -e "${INFO}Disco:${RESET} $(df -h)"
-        echo -e "${INFO}Red:${RESET} $(ip addr)"
-        echo -e "${HEADER}===========================${RESET}"
+        echo -e "${WHITE}Kernel:${NC} $(uname -r)"
+        echo -e "${WHITE}CPU:${NC} $(grep "model name" /proc/cpuinfo | head -n1)"
+        echo -e "${WHITE}Memoria:${NC} $(free -h)"
+        echo -e "${WHITE}Disco:${NC} $(df -h)"
+        echo -e "${WHITE}Red:${NC} $(ip addr)"
+        echo -e "${PURPLE}===========================${NC}"
     } 2>/dev/null || true
 }
 

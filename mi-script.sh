@@ -112,22 +112,42 @@ execute_with_log() {
     fi
 }
 
-# Función para verificar requisitos del sistema
+# Función modificada para verificar requisitos del sistema
 check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"
     
-    # Verificar espacio en disco
-    local min_space=$((20 * 1024 * 1024 * 1024))
-    local available_space
-    available_space=$(df -B1 --output=avail / | tail -n1)
+    # Listar todos los discos disponibles
+    local available_disks
+    available_disks=($(lsblk -dpno NAME,SIZE,TYPE | grep disk))
     
-    if [[ "$available_space" -lt "$min_space" ]]; then
-        log "ERROR" "Espacio insuficiente: $(numfmt --to=iec-i --suffix=B "$available_space") < 20GB"
+    # Verificar si hay discos disponibles
+    if [[ ${#available_disks[@]} -eq 0 ]]; then
+        log "ERROR" "No se encontraron discos disponibles"
+        return 1
+    }
+    
+    # Verificar espacio en los discos disponibles
+    local found_suitable_disk=false
+    local min_space=$((15 * 1024 * 1024 * 1024)) # Reducido a 15GB para VMs
+    
+    for disk in "${available_disks[@]}"; do
+        local disk_name=$(echo "$disk" | cut -d' ' -f1)
+        local disk_size=$(blockdev --getsize64 "$disk_name")
+        
+        if [[ "$disk_size" -ge "$min_space" ]]; then
+            found_suitable_disk=true
+            log "INFO" "Disco encontrado con espacio suficiente: $disk_name ($(numfmt --to=iec-i --suffix=B "$disk_size"))"
+            break
+        fi
+    done
+    
+    if ! $found_suitable_disk; then
+        log "ERROR" "No se encontró ningún disco con al menos 15GB de espacio"
         return 1
     fi
     
     # Verificar memoria
-    local min_ram=1024
+    local min_ram=512  # Reducido a 512MB para VMs
     local total_ram
     total_ram=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
     
@@ -154,14 +174,6 @@ check_system_requirements() {
         log "INFO" "Sistema en modo BIOS"
     fi
     
-    # Verificar conexión a Internet
-    if ! ping -c 1 -W 5 archlinux.org &>/dev/null; then
-        log "ERROR" "No hay conexión a Internet"
-        echo -e "${RED}Error: Se requiere conexión a Internet.${NC}"
-        return 1
-    fi
-    
-    log "INFO" "Requisitos del sistema verificados correctamente"
     return 0
 }
 
@@ -264,16 +276,27 @@ setup_ethernet_connection() {
 prepare_disk() {
     log "INFO" "Preparando disco para instalación"
     
-    # Listar discos disponibles
+    # Listar discos disponibles con información detallada
     local available_disks
-    available_disks=($(lsblk -dpno NAME,SIZE,TYPE | grep disk))
+    available_disks=($(lsblk -dpno NAME,SIZE,TYPE,MODEL | grep disk))
     
     echo -e "${BLUE}Discos disponibles:${NC}"
     printf '%s\n' "${available_disks[@]}" | nl
     
+    # Buscar particiones existentes y sistemas operativos
+    echo -e "\n${YELLOW}Sistemas operativos detectados:${NC}"
+    for disk in "${available_disks[@]}"; do
+        local disk_name=$(echo "$disk" | cut -d' ' -f1)
+        echo -e "\n${CYAN}Analizando $disk_name:${NC}"
+        fdisk -l "$disk_name" 2>/dev/null || true
+        if command -v os-prober &>/dev/null; then
+            os-prober | grep "$disk_name" || true
+        fi
+    done
+    
     # Seleccionar disco
     while true; do
-        echo -e "${BLUE}Seleccione el número del disco para la instalación:${NC}"
+        echo -e "\n${BLUE}Seleccione el número del disco para la instalación:${NC}"
         read -r disk_number
         
         if [[ $disk_number =~ ^[0-9]+$ ]] && \
@@ -286,7 +309,27 @@ prepare_disk() {
         log "WARN" "Selección inválida"
     done
     
-    # Confirmar selección
+    # Buscar espacio libre
+    local free_space
+    free_space=$(parted "$TARGET_DISK" print free | grep "Free Space" | tail -n1)
+    
+    if [[ -n "$free_space" ]]; then
+        echo -e "${GREEN}Se encontró espacio libre en $TARGET_DISK:${NC}"
+        echo "$free_space"
+        
+        echo -e "${BLUE}¿Desea usar este espacio libre para la instalación? (s/N):${NC}"
+        read -r use_free_space
+        
+        if [[ "$use_free_space" =~ ^[Ss]$ ]]; then
+            # Usar espacio libre existente
+            local start_sector=$(echo "$free_space" | awk '{print $1}')
+            local end_sector=$(echo "$free_space" | awk '{print $2}')
+            create_partitions_in_free_space "$TARGET_DISK" "$start_sector" "$end_sector"
+            return $?
+        fi
+    fi
+    
+    # Si no hay espacio libre o el usuario no quiere usarlo
     echo -e "${RED}¡ADVERTENCIA! Se borrarán todos los datos en $TARGET_DISK${NC}"
     echo -e "${BLUE}¿Está seguro? (s/N):${NC}"
     read -r confirm
@@ -296,60 +339,42 @@ prepare_disk() {
         return 1
     fi
     
-    # Crear esquema de particiones según modo de arranque
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    if [[ "$boot_mode" == "UEFI" ]]; then
         create_uefi_partitions
     else
         create_bios_partitions
     fi
 }
 
-create_uefi_partitions() {
-    log "INFO" "Creando particiones UEFI"
+# Nueva función para crear particiones en espacio libre
+create_partitions_in_free_space() {
+    local disk="$1"
+    local start="$2"
+    local end="$3"
+    
+    log "INFO" "Creando particiones en espacio libre: $start - $end"
     
     # Calcular tamaños
-    local disk_size
-    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
-    local efi_size=512
-    local swap_size
-    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-    local root_size=$((disk_size - efi_size - swap_size))
+    local total_space=$(($end - $start))
+    local swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    local min_space=15360  # 15GB en MB
     
-    # Crear tabla GPT
-    if ! parted -s "$TARGET_DISK" mklabel gpt; then
-        log "ERROR" "Fallo al crear tabla GPT"
+    if [[ "$total_space" -lt "$min_space" ]]; then
+        log "ERROR" "Espacio libre insuficiente"
         return 1
     fi
     
-    # Crear particiones
-    if ! parted -s "$TARGET_DISK" \
-        mkpart ESP fat32 1MiB "${efi_size}MiB" \
-        set 1 esp on \
-        mkpart primary ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
-        mkpart primary linux-swap "$((efi_size + root_size))MiB" 100%; then
-        log "ERROR" "Fallo al crear particiones UEFI"
-        return 1
+    if [[ "$boot_mode" == "UEFI" ]]; then
+        # Crear particiones UEFI en espacio libre
+        parted -s "$disk" mkpart ESP fat32 "$start" "$((start + 512))MiB" set 1 esp on
+        parted -s "$disk" mkpart primary ext4 "$((start + 512))MiB" "$((end - swap_size))MiB"
+        parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
+    else
+        # Crear particiones BIOS en espacio libre
+        parted -s "$disk" mkpart primary ext4 "$start" "$((end - swap_size))MiB"
+        parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
     fi
     
-    # Formatear particiones
-    local efi_part="${TARGET_DISK}1"
-    local root_part="${TARGET_DISK}2"
-    local swap_part="${TARGET_DISK}3"
-    
-    if ! mkfs.fat -F32 "$efi_part" && \
-       ! mkfs.ext4 -F "$root_part" && \
-       ! mkswap "$swap_part" && \
-       ! swapon "$swap_part"; then
-        log "ERROR" "Fallo al formatear particiones"
-        return 1
-    fi
-    
-    # Montar particiones
-    mount "$root_part" /mnt
-    mkdir -p /mnt/boot/efi
-    mount "$efi_part" /mnt/boot/efi
-    
-    log "INFO" "Particionamiento UEFI completado"
     return 0
 }
 

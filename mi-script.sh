@@ -598,7 +598,7 @@ show_warning_message() {
 
 create_uefi_partitions() {
     log "INFO" "Creando particiones UEFI"
-    
+
     # Calcular tamaños
     local disk_size
     disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
@@ -606,122 +606,73 @@ create_uefi_partitions() {
     local swap_size
     swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
     local root_size=$((disk_size - efi_size - swap_size))
-    
-    echo -e "\n${PURPLE}Esquema de particionamiento:${NC}"
-    echo -e "${CYAN}• Partición EFI: ${efi_size}MB${NC}"
-    echo -e "${CYAN}• Partición ROOT: ${root_size}MB${NC}"
-    echo -e "${CYAN}• Partición SWAP: ${swap_size}MB${NC}\n"
-    
-    # Crear tabla GPT
-    log "INFO" "Creando tabla de particiones GPT"
+
+    # Crear tabla de particiones GPT
     if ! parted -s "$TARGET_DISK" mklabel gpt; then
         log "ERROR" "Fallo al crear tabla GPT"
         return 1
     fi
-    
-    # Crear particiones con barra de progreso
-    echo -ne "${CYAN}Creando particiones...${NC}"
-    
-    # EFI
+
+    # Crear particiones
     if ! parted -s "$TARGET_DISK" \
         mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
-        set 1 esp on; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al crear partición EFI"
-        return 1
-    fi
-    show_progress 1 3
-    
-    # ROOT
-    if ! parted -s "$TARGET_DISK" \
-        mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB"; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al crear partición ROOT"
-        return 1
-    fi
-    show_progress 2 3
-    
-    # SWAP
-    if ! parted -s "$TARGET_DISK" \
+        set 1 esp on \
+        mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
         mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al crear partición SWAP"
+        log "ERROR" "Fallo al crear particiones UEFI"
         return 1
     fi
-    show_progress 3 3
-    echo -e "${GREEN}✔${NC}"
-    
+
     # Esperar a que el kernel detecte las nuevas particiones
     sleep 2
-    
+
     # Obtener nombres de las particiones
     local efi_part="${TARGET_DISK}1"
     local root_part="${TARGET_DISK}2"
     local swap_part="${TARGET_DISK}3"
-    
+
     # Formatear particiones
-    echo -e "\n${PURPLE}Formateando particiones:${NC}"
-    
-    echo -ne "${CYAN}Formateando partición EFI... ${NC}"
     if ! mkfs.fat -F32 "$efi_part"; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al formatear partición EFI"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
-    echo -ne "${CYAN}Formateando partición ROOT... ${NC}"
+
     if ! mkfs.ext4 -F "$root_part"; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al formatear partición ROOT"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
-    echo -ne "${CYAN}Formateando partición SWAP... ${NC}"
+
     if ! mkswap "$swap_part"; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al formatear partición SWAP"
         return 1
     fi
     if ! swapon "$swap_part"; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al activar SWAP"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
+
     # Montar particiones
-    echo -e "\n${PURPLE}Montando particiones:${NC}"
-    
-    echo -ne "${CYAN}Montando partición ROOT... ${NC}"
     if ! mount "$root_part" /mnt; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al montar partición ROOT"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
-    echo -ne "${CYAN}Creando y montando directorio EFI... ${NC}"
+
     if ! mkdir -p /mnt/boot/efi; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al crear directorio EFI"
         return 1
     fi
     if ! mount "$efi_part" /mnt/boot/efi; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al montar partición EFI"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
+
     log "SUCCESS" "Particionamiento UEFI completado exitosamente"
     return 0
 }
 
 create_bios_partitions() {
     log "INFO" "Creando particiones BIOS"
-    
+
     # Calcular tamaños
     local disk_size
     disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
@@ -729,115 +680,51 @@ create_bios_partitions() {
     local swap_size
     swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
     local root_size=$((disk_size - boot_size - swap_size))
-    
-    echo -e "\n${PURPLE}Esquema de particionamiento:${NC}"
-    echo -e "${CYAN}• Partición BOOT: ${boot_size}MB${NC}"
-    echo -e "${CYAN}• Partición ROOT: ${root_size}MB${NC}"
-    echo -e "${CYAN}• Partición SWAP: ${swap_size}MB${NC}\n"
-    
-    # Crear tabla MBR
-    log "INFO" "Creando tabla de particiones MBR"
+
+    # Crear tabla de particiones MBR
     if ! parted -s "$TARGET_DISK" mklabel msdos; then
         log "ERROR" "Fallo al crear tabla MBR"
         return 1
     fi
-    
-    # Crear particiones con barra de progreso
-    echo -ne "${CYAN}Creando particiones...${NC}"
-    
-    # BOOT
+
+    # Crear particiones
     if ! parted -s "$TARGET_DISK" \
         mkpart primary ext4 1MiB "${boot_size}MiB" \
-        set 1 boot on; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al crear partición BOOT"
-        return 1
-    fi
-    show_progress 1 3
-    
-    # ROOT
-    if ! parted -s "$TARGET_DISK" \
-        mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB"; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al crear partición ROOT"
-        return 1
-    fi
-    show_progress 2 3
-    
-    # SWAP
-    if ! parted -s "$TARGET_DISK" \
+        set 1 boot on \
+        mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
         mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al crear partición SWAP"
+        log "ERROR" "Fallo al crear particiones BIOS"
         return 1
     fi
-    show_progress 3 3
-    echo -e "${GREEN}✔${NC}"
-    
-    # Esperar a que el kernel detecte las nuevas particiones
-    sleep 2
-    
+
     # Obtener nombres de las particiones
     local boot_part="${TARGET_DISK}1"
     local root_part="${TARGET_DISK}2"
     local swap_part="${TARGET_DISK}3"
-    
+
     # Formatear particiones
-    echo -e "\n${PURPLE}Formateando particiones:${NC}"
-    
-    echo -ne "${CYAN}Formateando partición BOOT... ${NC}"
-    if ! mkfs.ext4 -F "$boot_part"; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al formatear partición BOOT"
+    if ! mkfs.ext4 -F "$boot_part" || \
+       ! mkfs.ext4 -F "$root_part" || \
+       ! mkswap "$swap_part" || \
+       ! swapon "$swap_part"; then
+        log "ERROR" "Fallo al formatear particiones"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
-    echo -ne "${CYAN}Formateando partición ROOT... ${NC}"
-    if ! mkfs.ext4 -F "$root_part"; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al formatear partición ROOT"
-        return 1
-    fi
-    echo -e "${GREEN}✔${NC}"
-    
-    echo -ne "${CYAN}Formateando partición SWAP... ${NC}"
-    if ! mkswap "$swap_part"; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al formatear partición SWAP"
-        return 1
-    fi
-    if ! swapon "$swap_part"; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al activar SWAP"
-        return 1
-    fi
-    echo -e "${GREEN}✔${NC}"
-    
+
     # Montar particiones
-    echo -e "\n${PURPLE}Montando particiones:${NC}"
-    
-    echo -ne "${CYAN}Montando partición ROOT... ${NC}"
     if ! mount "$root_part" /mnt; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al montar partición ROOT"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
-    echo -ne "${CYAN}Creando y montando directorio BOOT... ${NC}"
     if ! mkdir -p /mnt/boot; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al crear directorio BOOT"
         return 1
     fi
     if ! mount "$boot_part" /mnt/boot; then
-        echo -e "${ERROR}✘${NC}"
         log "ERROR" "Fallo al montar partición BOOT"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
+
     log "SUCCESS" "Particionamiento BIOS completado exitosamente"
     return 0
 }
@@ -926,31 +813,29 @@ install_base_system() {
 
 update_mirrors() {
     log "INFO" "Actualizando lista de mirrors"
-    
-    echo -ne "${CYAN}Respaldando mirrorlist actual... ${NC}"
+
+    # Respaldar el mirrorlist actual
     if ! cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.backup; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al respaldar mirrorlist"
+        log "ERROR" "Fallo al respaldar el mirrorlist actual"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
+
+    # Intentar usar reflector para optimizar los mirrors
     if command -v reflector &>/dev/null; then
-        echo -ne "${CYAN}Optimizando mirrors con reflector... ${NC}"
-        if reflector --latest 20 \
-                    --protocol https \
-                    --sort rate \
-                    --save /etc/pacman.d/mirrorlist &>/dev/null; then
-            echo -e "${GREEN}✔${NC}"
+        if ! reflector --latest 20 \
+                      --protocol https \
+                      --sort rate \
+                      --save /etc/pacman.d/mirrorlist; then
+            log "WARN" "Fallo al actualizar los mirrors con reflector, usando lista por defecto"
         else
-            echo -e "${ERROR}✘${NC}"
-            log "WARN" "Fallo al optimizar mirrors, usando lista por defecto"
+            log "SUCCESS" "Mirrorlist actualizado correctamente"
+            return 0
         fi
     else
         log "WARN" "reflector no está instalado, usando mirrors por defecto"
     fi
-    
-    return 0
+
+    return 1
 }
 
 configure_system() {
@@ -1112,34 +997,33 @@ configure_network() {
 
 configure_bootloader() {
     log "INFO" "Instalando y configurando bootloader"
-    
+
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -ne "${CYAN}Instalando GRUB para UEFI... ${NC}"
+        # Instalar GRUB para UEFI
         if ! arch-chroot /mnt grub-install --target=x86_64-efi \
                                          --efi-directory=/boot/efi \
                                          --bootloader-id=GRUB; then
-            echo -e "${ERROR}✘${NC}"
+            log "ERROR" "Fallo al instalar GRUB (UEFI)"
             return 1
         fi
     else
-        echo -ne "${CYAN}Instalando GRUB para BIOS... ${NC}"
+        # Instalar GRUB para BIOS
         if ! arch-chroot /mnt grub-install --target=i386-pc "$TARGET_DISK"; then
-            echo -e "${ERROR}✘${NC}"
+            log "ERROR" "Fallo al instalar GRUB (BIOS)"
             return 1
         fi
     fi
-    echo -e "${GREEN}✔${NC}"
-    
+
     # Configurar GRUB
     sed -i 's/#GRUB_DISABLE_OS_PROBER=false/GRUB_DISABLE_OS_PROBER=false/' /mnt/etc/default/grub
-    
-    echo -ne "${CYAN}Generando configuración de GRUB... ${NC}"
+
+    # Generar configuración de GRUB
     if ! arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg; then
-        echo -e "${ERROR}✘${NC}"
+        log "ERROR" "Fallo al generar configuración de GRUB"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
-    
+
+    log "SUCCESS" "Bootloader GRUB configurado correctamente"
     return 0
 }
 

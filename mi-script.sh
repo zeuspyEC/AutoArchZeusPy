@@ -248,20 +248,18 @@ check_dependencies() {
     
     local missing_deps=()
     
-    echo -e "\n${PURPLE}Verificando dependencias requeridas:${NC}\n"
-    
     for dep in "${deps[@]}"; do
-        echo -ne "${CYAN}Verificando $dep... ${NC}"
-        if command -v "$dep" >/dev/null 2>&1; then
-            echo -e "${GREEN}✔${NC}"
-        else
-            echo -e "${ERROR}✘${NC}"
+        if ! command -v "$dep" >/dev/null 2>&1; then
             missing_deps+=("$dep")
         fi
     done
     
     if ((${#missing_deps[@]} > 0)); then
-        log "ERROR" "Faltan las siguientes dependencias: ${missing_deps[*]}"
+        echo -e "\n${ERROR}Faltan las siguientes dependencias:${NC}"
+        for dep in "${missing_deps[@]}"; do
+            echo -e "${ERROR}• $dep${NC}"
+        done
+        echo ""
         return 1
     fi
     

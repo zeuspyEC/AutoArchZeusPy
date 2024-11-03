@@ -110,7 +110,6 @@ log() {
 }
 
 # Función para mostrar información del sistema
-# Función para mostrar información del sistema
 print_system_info() {
     echo -e "${PURPLE}╔══════════════════════════════════════╗${NC}"
     echo -e "${PURPLE}║      Información del Sistema         ║${NC}"

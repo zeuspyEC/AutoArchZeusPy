@@ -1,46 +1,4 @@
 #!/usr/bin/env bash
-# Función para centrar texto
-format_center() {
-    log "DEBUG" "Formateando texto centrado: $1"
-    if [ -z "$1" ]; then
-        log "ERROR" "Texto vacío en format_center"
-        return 1
-    fi  
-    local text="$1"
-    local width=$(tput cols)
-    local padding=$((($width - ${#text}) / 2))
-    printf "%*s%s%*s\n" $padding "" "$text" $padding ""
-}
-
-# Función para mostrar el banner
-display_banner() {
-  clear
-  local banner_text="${BLUE}███████╗███████╗██╗   ██╗███████╗██████╗ ██╗   ██╗███████╗ ██████╗${NC}"
-  format_center "$banner_text"
-  local banner_text="${BLUE}╚══███╔╝██╔════╝██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝██╔════╝██╔════╝${NC}"
-  format_center "$banner_text" 
-  local banner_text="${BLUE}  ███╔╝ █████╗  ██║   ██║███████╗██████╔╝ ╚████╔╝ █████╗  ██║     ${NC}"
-  format_center "$banner_text"
-  local banner_text="${BLUE} ███╔╝  ██╔══╝  ██║   ██║╚════██║██╔═══╝   ╚██╔╝  ██╔══╝  ██║     ${NC}"  
-  format_center "$banner_text"
-  local banner_text="${BLUE}███████╗███████╗╚██████╔╝███████║██║        ██║   ███████╗╚██████╗${NC}"
-  format_center "$banner_text"
-  local banner_text="${BLUE}╚══════╝╚══════╝ ╚═════╝ ╚══════╝╚═╝        ╚═╝   ╚══════╝ ╚═════╝${NC}"  
-  format_center "$banner_text"
-  echo
-}
-
-# Función de bienvenida
-welcome() {
-  clear
-  display_banner
-  
-  dialog --backtitle "Instalador de Arch Linux" \
-         --title "Bienvenido" \
-         --msgbox "Bienvenido al instalador de Arch Linux. Este script te guiará a través del proceso de instalación." \
-         10 60
-  clear
-}
 
 # Habilitar modo estricto  
 set -euo pipefail
@@ -86,23 +44,25 @@ log() {
     
     case "$level" in 
         "DEBUG")
-            echo "$log_message" >> "$DEBUG_LOG"
+            echo -e "${CYAN}$log_message${NC}" >> "$DEBUG_LOG"
+            ;;
+        "INFO")
+            echo -e "${GREEN}$log_message${NC}" | tee -a "$LOG_FILE"
+            ;;  
+        "WARN")
+            echo -e "${YELLOW}$log_message${NC}" | tee -a "$LOG_FILE" 
             ;;
         "ERROR") 
             {
-                echo "$log_message"
+                echo -e "${RED}$log_message${NC}"
                 echo "=== Sistema Info ==="
                 echo "Kernel: $(uname -a)"  
                 echo "Memoria: $(free -h)"
                 echo "Disco: $(df -h)"
-                echo "Procesos: $(ps aux | grep -i dialog)"
+                echo "Procesos: $(ps aux)"
                 echo "Variables: $(env)" 
                 echo "==================="
-            } >> "$ERROR_LOG"
-            echo "$log_message" >> "$LOG_FILE"
-            ;;
-        *)  
-            echo "$log_message" >> "$LOG_FILE"
+            } | tee -a "$ERROR_LOG"
             ;;
     esac
 }
@@ -125,16 +85,7 @@ handle_error() {
         echo "==================="
     } >> "$ERROR_LOG"
     
-    if command -v dialog &> /dev/null; then
-        dialog --clear \
-               --colors \  
-               --backtitle "Instalador de Arch Linux" \
-               --title "Error" \
-               --msgbox "\Z1Error:\Zn\n\n$error_message\n\nRevise el log en: $ERROR_LOG\n\nFunción: $function_name\nLínea: $line_number" \
-               12 60 2>> "$ERROR_LOG"
-    else 
-        echo -e "${RED}Error en $function_name (línea $line_number): $error_message${NC}" >&2
-    fi
+    echo -e "${RED}Error en $function_name (línea $line_number): $error_message${NC}" >&2
 } 
 
 # Configurar trap para capturar errores
@@ -160,35 +111,6 @@ execute_with_log() {
     fi
 }
 
-# Función para envolver comandos de dialog
-dialog_wrapper() {
-    local title="$1" 
-    shift
-    local args=("$@")
-    
-    log "DEBUG" "Iniciando dialog: $title con argumentos: ${args[*]}"
-    
-    local output
-    if output=$(dialog --colors \
-                      --no-collapse \
-                      --backtitle "Instalador de Arch Linux" \ 
-                      "${args[@]}" 2>&1); then
-        log "INFO" "Dialog exitoso: $title" 
-        log "DEBUG" "Salida: $output"
-        echo "$output" 
-        return 0
-    else
-        local exit_code=$?
-        if [ $exit_code -eq 1 ]; then 
-            log "WARN" "Usuario canceló el diálogo: $title"
-        else
-            log "ERROR" "Error en diálogo ($exit_code): $title" 
-        fi
-        log "DEBUG" "Salida: $output"
-        return $exit_code
-    fi
-}
-
 # Función para verificar requisitos del sistema
 check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"
@@ -200,7 +122,7 @@ check_system_requirements() {
     
     if [[ "$total_ram" -lt "$min_ram" ]]; then
         log "ERROR" "Memoria RAM insuficiente: $total_ram MB < $min_ram MB"
-        dialog_wrapper "Error" --title "Error" --msgbox "Memoria RAM insuficiente para la instalación.\nSe requiere al menos 1GB de RAM." 7 50
+        echo -e "${RED}Error: Memoria RAM insuficiente para la instalación. Se requiere al menos 1GB de RAM.${NC}"
         return 1
     fi
     
@@ -210,7 +132,7 @@ check_system_requirements() {
     
     if [[ "$arch" != "x86_64" && "$arch" != "i686" ]]; then
         log "ERROR" "Arquitectura no soportada: $arch"
-        dialog_wrapper "Error" --title "Error" --msgbox "Arquitectura no soportada.\nSe requiere un sistema x86_64 o i686." 7 50
+        echo -e "${RED}Error: Arquitectura no soportada. Se requiere un sistema x86_64 o i686.${NC}"
         return 1
     fi
     
@@ -247,15 +169,24 @@ check_dependencies() {
         log "INFO" "Instalando dependencias faltantes: ${missing_deps[*]}"  
         if ! execute_with_log pacman -Sy --noconfirm "${missing_deps[@]}"; then
             log "WARN" "Fallo al instalar algunas dependencias"
-            if ! dialog_wrapper "Continuar" --title "Advertencia" --yesno "Fallo al instalar algunas dependencias. ¿Desea continuar de todos modos?" 7 50; then
-                log "ERROR" "El usuario decidió cancelar la instalación"
-                return 1
-            fi
+            echo -e "${YELLOW}Advertencia: Fallo al instalar algunas dependencias. ¿Desea continuar de todos modos? (s/n)${NC}"
+            read -r choice
+            case "$choice" in
+                s|S)
+                    log "INFO" "El usuario decidió continuar a pesar de las dependencias faltantes"
+                    ;;
+                *)
+                    log "ERROR" "El usuario decidió cancelar la instalación"
+                    echo -e "${RED}Instalación cancelada por el usuario.${NC}"
+                    return 1
+                    ;;
+            esac
         fi
     fi
     
     return 0
 }
+
 # Función para verificar conexión a Internet
 check_internet_connection() {
     log "INFO" "Verificando conexión a Internet"
@@ -266,23 +197,28 @@ check_internet_connection() {
     while [[ $current_attempt -le $max_attempts ]]; do
         if execute_with_log ping -c 1 -W 5 8.8.8.8 &>/dev/null; then
             log "INFO" "Conexión a Internet verificada"
-            dialog_wrapper "Éxito" --title "Conexión" --msgbox "Conexión a Internet establecida." 5 40
+            echo -e "${GREEN}Conexión a Internet establecida.${NC}"
             return 0  
         fi
         
         log "WARN" "Intento $current_attempt de $max_attempts fallido"
         
         if [[ $current_attempt -lt $max_attempts ]]; then
-            if ! dialog_wrapper "Reintento" --title "Error de conexión" --yesno "No se pudo establecer conexión a Internet.\n¿Desea intentar nuevamente?" 7 50; then
-                break  
-            fi
+            echo -e "${YELLOW}No se pudo establecer conexión a Internet. ¿Desea intentar nuevamente? (s/n)${NC}"
+            read -r choice
+            case "$choice" in
+                s|S)
+                    ((current_attempt++))
+                    ;;
+                *)
+                    break
+                    ;;
+            esac
         fi
-        
-        ((current_attempt++))
     done
     
     log "ERROR" "No se pudo establecer conexión a Internet"  
-    dialog_wrapper "Error" --title "Error" --msgbox "No se pudo establecer conexión a Internet.\nLa instalación no puede continuar." 7 50
+    echo -e "${RED}Error: No se pudo establecer conexión a Internet. La instalación no puede continuar.${NC}"
     return 1
 }
 
@@ -298,33 +234,35 @@ select_language() {
     )
     
     while true; do
-        language=$(dialog_wrapper "Idioma" \
-            --title "Selección de idioma" \
-            --menu "Seleccione el idioma para la instalación:" \
-            10 50 4 \
-            "${languages[@]}" \
-            3>&1 1>&2 2>&3)
+        echo -e "${BLUE}Seleccione el idioma para la instalación:${NC}"
+        for ((i=0; i<${#languages[@]}; i+=2)); do
+            echo "$((i/2+1)). ${languages[i+1]}"
+        done
         
-        exit_code=$?
+        read -r choice
         
-        if [[ $exit_code -eq 0 && -n "$language" ]]; then
+        if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le $((${#languages[@]}/2)) ]]; then
+            language="${languages[((choice-1)*2)]}"
             log "INFO" "Idioma seleccionado: $language"
             return 0
-        elif [[ $exit_code -eq 1 ]]; then
-            log "WARN" "No se seleccionó ningún idioma"
-            if ! dialog_wrapper "Reintentar" --title "Advertencia" --yesno "No se seleccionó ningún idioma. ¿Desea volver a intentarlo?" 7 50; then
-                log "ERROR" "El usuario decidió cancelar la instalación"
-                return 1
-            fi
         else
-            log "ERROR" "Ocurrió un error inesperado en la selección de idioma (código de salida: $exit_code)"
-            if ! dialog_wrapper "Reintentar" --title "Error" --yesno "Ocurrió un error inesperado. ¿Desea volver a intentarlo?" 7 50; then
-                log "ERROR" "El usuario decidió cancelar la instalación"
-                return 1
-            fi
+            log "WARN" "No se seleccionó ningún idioma válido"
+            echo -e "${YELLOW}Advertencia: No se seleccionó un idioma válido. ¿Desea volver a intentarlo? (s/n)${NC}"
+            read -r retry
+            case "$retry" in
+                s|S)
+                    continue
+                    ;;
+                *)
+                    log "ERROR" "El usuario decidió cancelar la instalación"
+                    echo -e "${RED}Instalación cancelada por el usuario.${NC}"
+                    return 1
+                    ;;
+            esac
         fi
     done
 }
+
 # Función para configurar disposición del teclado
 set_keyboard_layout() {
     log "INFO" "Configurando disposición del teclado"
@@ -336,25 +274,26 @@ set_keyboard_layout() {
         "de" "Alemán"  
     )
     
-    keyboard_layout=$(dialog_wrapper "Teclado" \
-        --title "Selección de disposición del teclado" \
-        --menu "Seleccione la disposición del teclado:" \
-        10 50 4 \
-        "${layouts[@]}" \
-        3>&1 1>&2 2>&3)
+    echo -e "${BLUE}Seleccione la disposición del teclado:${NC}"
+    for ((i=0; i<${#layouts[@]}; i+=2)); do
+        echo "$((i/2+1)). ${layouts[i+1]}"
+    done
     
-    if [[ $? -ne 0 || -z "$keyboard_layout" ]]; then
+    read -r choice
+    
+    if [[ $choice =~ ^[0-9]+$ && $choice -ge 1 && $choice -le $((${#layouts[@]}/2)) ]]; then
+        keyboard_layout="${layouts[((choice-1)*2)]}"
+        if ! execute_with_log loadkeys "$keyboard_layout"; then
+            log "ERROR" "Fallo al establecer la disposición del teclado"
+            return 1
+        fi
+        log "INFO" "Disposición del teclado configurada: $keyboard_layout"
+        return 0
+    else
         log "ERROR" "No se seleccionó una disposición válida del teclado" 
+        echo -e "${RED}Error: No se seleccionó una disposición válida del teclado.${NC}"
         return 1
     fi
-    
-    if ! execute_with_log loadkeys "$keyboard_layout"; then
-        log "ERROR" "Fallo al establecer la disposición del teclado"
-        return 1
-    fi
-    
-    log "INFO" "Disposición del teclado configurada: $keyboard_layout"
-    return 0 
 }
 
 # Función para seleccionar partición de instalación
@@ -368,21 +307,30 @@ if [[ $? -ne 0 ]]; then
     return 1
 fi
 
-selected_partition=$(dialog_wrapper "Partición" \
-    --title "Selección de partición" \
-    --menu "Seleccione la partición para la instalación:" \
-    15 60 6 \
-    $partitions \
-    3>&1 1>&2 2>&3)
+echo -e "${BLUE}Seleccione la partición para la instalación:${NC}"
+echo "$partitions" | while IFS= read -r line; do
+    echo "$line"
+done
 
-if [[ $? -ne 0 || -z "$selected_partition" ]]; then
-    log "ERROR" "No se seleccionó una partición válida"
+read -r choice
+
+if [[ -n "$choice" ]]; then
+    selected_partition=$(echo "$partitions" | sed -n "${choice}p" | awk '{print $1}')
+    if [[ -z "$selected_partition" ]]; then
+        log "ERROR" "No se seleccionó una partición válida"
+        echo -e "${RED}Error: No se seleccionó una partición válida.${NC}"
+        return 1
+    fi
+else
+    log "ERROR" "No se seleccionó una partición"
+    echo -e "${RED}Error: No se seleccionó una partición.${NC}"
     return 1
 fi
 
 log "INFO" "Partición seleccionada: $selected_partition"
 return 0
 }
+
 # Función para obtener particiones disponibles
 get_partitions() { log "DEBUG" "Obteniendo lista de particiones" local partitions="" local count=0
 
@@ -396,7 +344,7 @@ while IFS= read -r line; do
         size="$(echo "$line" | awk '{print $2}')"
         type="$(echo "$line" | awk '{print $3}')"
         
-        partitions="${partitions} ${device} \"${size} - ${type}\" "
+        partitions="${partitions}${device} ${size} - ${type}\n"
         ((count++))
     fi
 done < <(lsblk -pn -o NAME,SIZE,TYPE)
@@ -406,16 +354,19 @@ if [[ $count -eq 0 ]]; then
     return 1
 fi
 
-echo "$partitions"
+echo -e "$partitions" | cat -n
 return 0
 }
 
-# Función para particionar el disco
+# Función para particionar el disco  
 partition_disk() {
     local device="$1"
     log "INFO" "Iniciando particionamiento de disco: $device"
     
-    if dialog_wrapper "Particionamiento" --title "Particionamiento de disco" --yesno "¿Desea particionar automáticamente el disco $device?" 7 60; then
+    echo -e "${BLUE}¿Desea particionar automáticamente el disco $device? (s/n)${NC}"
+    read -r choice
+    
+    if [[ "$choice" =~ ^[Ss]$ ]]; then
         log "INFO" "Particionamiento automático seleccionado"
         
         # Calcular tamaños
@@ -460,15 +411,18 @@ partition_disk() {
     else
         log "INFO" "Particionamiento manual seleccionado"
         
-        if ! dialog_wrapper "Advertencia" --title "Advertencia" \
-                --yesno "¡ADVERTENCIA!\n\nSe borrarán todos los datos en $device.\n¿Está seguro de continuar?" 10 50; then
-            log "INFO" "Usuario canceló el particionamiento"
-            return 1
-        fi
+        echo -e "${YELLOW}¡ADVERTENCIA! Se borrarán todos los datos en $device. ¿Está seguro de continuar? (s/n)${NC}"
+        read -r confirm
         
-        # Obtener particiones manualmente usando cfdisk
-        if ! execute_with_log cfdisk "$device"; then
-            log "ERROR" "Fallo al particionar manualmente el disco"
+        if [[ "$confirm" =~ ^[Ss]$ ]]; then
+            # Obtener particiones manualmente usando cfdisk
+            if ! execute_with_log cfdisk "$device"; then
+                log "ERROR" "Fallo al particionar manualmente el disco"
+                return 1
+            fi
+        else
+            log "INFO" "Usuario canceló el particionamiento"
+            echo -e "${RED}Particionamiento cancelado por el usuario.${NC}"
             return 1
         fi
     fi
@@ -514,6 +468,7 @@ partition_disk() {
     log "INFO" "Particionamiento completado exitosamente"
     return 0
 }
+
 # Función para montar particiones  
 mount_partitions() {
     log "INFO" "Montando particiones"
@@ -617,14 +572,21 @@ configure_timezone() { log "INFO" "Configurando zona horaria"
 local timezones 
 timezones=$(timedatectl list-timezones)
 
-local timezone
-timezone=$(dialog_wrapper "Zona horaria" \
-    --title "Configuración de zona horaria" \
-    --menu "Seleccione su zona horaria:" \
-    20 60 10 \
-    $(echo "$timezones" | while read -r zone; do echo "$zone" ""; done))
+echo -e "${BLUE}Seleccione su zona horaria:${NC}"
+echo "$timezones" | cat -n
 
-if [[ $? -eq 0 && -n "$timezone" ]]; then
+read -r choice
+
+if [[ $choice =~ ^[0-9]+$ ]]; then
+    local timezone
+    timezone=$(echo "$timezones" | sed -n "${choice}p")
+    
+    if [[ -z "$timezone" ]]; then
+        log "WARN" "No se seleccionó una zona horaria válida"
+        echo -e "${YELLOW}Advertencia: No se seleccionó una zona horaria válida.${NC}"
+        return 1
+    fi
+    
     if ! execute_with_log arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$timezone" /etc/localtime; then  
         log "ERROR" "Fallo al configurar zona horaria"
         return 1
@@ -635,10 +597,12 @@ if [[ $? -eq 0 && -n "$timezone" ]]; then
         return 1
     fi
 else
-    log "WARN" "No se seleccionó zona horaria" 
+    log "WARN" "No se seleccionó una zona horaria válida" 
+    echo -e "${YELLOW}Advertencia: No se seleccionó una zona horaria válida.${NC}"
     return 1
 fi
 
+log "INFO" "Zona horaria configurada: $timezone"
 return 0
 }
 # Función para configurar idioma
@@ -646,6 +610,7 @@ configure_language() { log "INFO" "Configurando idioma del sistema"
 
 if [[ -z "$language" ]]; then
     log "ERROR" "Variable de idioma no definida"
+    echo -e "${RED}Error: No se definió el idioma del sistema.${NC}"
     return 1
 fi
 
@@ -663,13 +628,10 @@ return 0
 # Función para configurar hostname
 configure_hostname() { log "INFO" "Configurando hostname"
 
-local hostname 
-hostname=$(dialog_wrapper "Hostname" \
-    --title "Nombre del equipo" \
-    --inputbox "Ingrese el nombre para este equipo:" \
-    8 40)
+echo -e "${BLUE}Ingrese el nombre para este equipo:${NC}"
+read -r hostname
 
-if [[ $? -eq 0 && -n "$hostname" ]]; then
+if [[ -n "$hostname" ]]; then
     echo "$hostname" > /mnt/etc/hostname
     
     # Configurar hosts
@@ -683,6 +645,7 @@ if [[ $? -eq 0 && -n "$hostname" ]]; then
     return 0
 else 
     log "ERROR" "No se proporcionó un hostname válido"
+    echo -e "${RED}Error: No se proporcionó un hostname válido.${NC}"
     return 1
 fi
 }
@@ -720,19 +683,16 @@ return 0
 # Función para crear usuario
 create_user() { log "INFO" "Creando usuario"
 
-local username
-username=$(dialog_wrapper "Usuario" \
-    --title "Creación de usuario" \
-    --inputbox "Ingrese el nombre de usuario:" \
-    8 40)
+echo -e "${BLUE}Ingrese el nombre de usuario:${NC}"
+read -r username
 
-if [[ $? -eq 0 && -n "$username" ]]; then
+if [[ -n "$username" ]]; then
     if ! execute_with_log arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$username"; then
         log "ERROR" "Fallo al crear usuario"
         return 1
     fi
     
-    log "INFO" "Estableciendo contraseña para $username"
+    echo -e "${BLUE}Estableciendo contraseña para $username:${NC}"
     if ! arch-chroot /mnt passwd "$username"; then
         log "ERROR" "Fallo al establecer contraseña"
         return 1
@@ -746,41 +706,41 @@ if [[ $? -eq 0 && -n "$username" ]]; then
     return 0
 else
     log "ERROR" "No se proporcionó un nombre de usuario válido"
+    echo -e "${RED}Error: No se proporcionó un nombre de usuario válido.${NC}"
     return 1
 fi
 }
 # Función para instalar entorno de escritorio
 install_desktop_environment() { log "INFO" "Instalando entorno de escritorio"
 
-local de
-de=$(dialog_wrapper "Entorno de escritorio" \
-    --title "Selección de entorno" \
-    --menu "Seleccione el entorno de escritorio:" \
-    15 60 4 \
-    "gnome" "GNOME Desktop" \
-    "kde" "KDE Plasma" \
-    "xfce" "Xfce Desktop" \
-    "none" "Sin entorno gráfico")
+echo -e "${BLUE}Seleccione el entorno de escritorio:${NC}"
+echo "1. GNOME Desktop"
+echo "2. KDE Plasma"  
+echo "3. Xfce Desktop"
+echo "4. Sin entorno gráfico"
 
-case "$de" in
-    gnome)
+read -r choice
+
+case "$choice" in
+    1)
         execute_with_log arch-chroot /mnt pacman -S --noconfirm gnome gnome-extra
         execute_with_log arch-chroot /mnt systemctl enable gdm
         ;;
-    kde) 
+    2) 
         execute_with_log arch-chroot /mnt pacman -S --noconfirm plasma plasma-wayland-session kde-applications
         execute_with_log arch-chroot /mnt systemctl enable sddm
         ;;
-    xfce)
+    3)
         execute_with_log arch-chroot /mnt pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
         execute_with_log arch-chroot /mnt systemctl enable lightdm
         ;;
-    none)
+    4)
         log "INFO" "No se instalará entorno de escritorio"
         return 0
         ;;
     *)
         log "ERROR" "Opción de entorno de escritorio no válida"
+        echo -e "${RED}Error: Opción de entorno de escritorio no válida.${NC}"
         return 1
         ;;
 esac
@@ -814,11 +774,9 @@ main() {
    # Verificar root
    if [[ $EUID -ne 0 ]]; then
        log "ERROR" "Este script debe ejecutarse como root"  
+       echo -e "${RED}Error: Este script debe ejecutarse como root.${NC}"
        exit 1
    fi
-   
-   # Mostrar banner y bienvenida
-   welcome
    
    # Verificar requisitos  
    check_system_requirements || exit 1
@@ -852,14 +810,22 @@ main() {
    local duration=$((end_time - start_time))
    
    log "INFO" "Instalación completada en $duration segundos"
+Continuamos desde donde nos quedamos:
+
+   echo -e "${GREEN}La instalación de Arch Linux se ha completado exitosamente.${NC}"
+   echo -e "${GREEN}Tiempo total: $duration segundos${NC}"
    
-   dialog_wrapper "Finalizado" \
-       --title "Instalación completada" \
-       --msgbox "La instalación de Arch Linux se ha completado exitosamente.\n\nTiempo total: $duration segundos\n\nPresione OK para reiniciar." \
-       10 60
+   echo -e "${BLUE}¿Desea reiniciar el sistema ahora? (s/n)${NC}"
+   read -r reboot_choice
    
    cleanup
-   execute_with_log reboot
+   
+   if [[ "$reboot_choice" =~ ^[Ss]$ ]]; then
+       execute_with_log reboot
+   else
+       log "INFO" "El usuario decidió no reiniciar el sistema"
+       echo -e "${YELLOW}Para iniciar Arch Linux, reinicie el sistema manualmente.${NC}"
+   fi
 }
 
 # Configurar trap para limpieza en caso de error
@@ -867,4 +833,6 @@ trap cleanup EXIT
 
 # Iniciar instalación
 main "$@"
+
+
 

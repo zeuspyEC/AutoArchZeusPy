@@ -273,6 +273,22 @@ check_dependencies() {
 check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"
     
+    # Detectar si es VM
+    local virt_type
+    virt_type=$(systemd-detect-virt 2>/dev/null || echo "physical")
+    
+    # Ajustar requisitos según el tipo de sistema
+    local min_ram
+    local min_disk
+    
+    if [ "$virt_type" = "physical" ]; then
+        min_ram=2048  # 2GB para sistemas físicos
+        min_disk=20   # 20GB para sistemas físicos
+    else
+        min_ram=512   # 512MB para VMs
+        min_disk=15   # 15GB para VMs
+    fi
+    
     # Verificar arquitectura
     local arch
     arch=$(uname -m)

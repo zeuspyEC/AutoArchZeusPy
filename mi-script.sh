@@ -1,5 +1,42 @@
 #!/usr/bin/env bash
+# Función para centrar texto
+format_center() {
+    log "DEBUG" "Formateando texto centrado: $1"
+    if [ -z "$1" ]; then
+        log "ERROR" "Texto vacío en format_center"
+        return 1
+    fi
+    local text="$1"
+    local width=$(tput cols)
+    local padding=$((($width - ${#text}) / 2))
+    printf "%*s%s%*s\n" $padding "" "$text" $padding ""
+}
 
+# Función para mostrar el banner
+display_banner() {
+  clear
+  local banner_text="${BLUE}███████╗███████╗██╗   ██╗███████╗██████╗ ██╗   ██╗███████╗ ██████╗${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}╚══███╔╝██╔════╝██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝██╔════╝██╔════╝${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}  ███╔╝ █████╗  ██║   ██║███████╗██████╔╝ ╚████╔╝ █████╗  ██║     ${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE} ███╔╝  ██╔══╝  ██║   ██║╚════██║██╔═══╝   ╚██╔╝  ██╔══╝  ██║     ${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}}███████╗███████╗╚██████╔╝███████║██║        ██║   ███████╗╚██████╗${NC}"
+  format_center "$banner_text"
+  local banner_text="${BLUE}╚══════╝╚══════╝ ╚═════╝ ╚══════╝╚═╝        ╚═╝   ╚══════╝ ╚═════╝${NC}"
+  format_center "$banner_text"
+  echo
+}
+
+# Función de bienvenida
+welcome() {
+  dialog --backtitle "Instalador de Arch Linux" \
+         --title "Bienvenido" \
+         --msgbox "Bienvenido al instalador de Arch Linux. Este script te guiará a través del proceso de instalación." \
+         10 60
+}
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'

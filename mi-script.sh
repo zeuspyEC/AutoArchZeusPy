@@ -9,6 +9,18 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# Checar dependencias faltantes
+check_dependencies() {
+    local deps=(parted mkfs.fat mkfs.ext4 arch-chroot)
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            log "ERROR" "Falta dependencia: $dep"
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Variables globales y constantes
 declare -g SCRIPT_VERSION="2.0"
 declare -g selected_partition=""
@@ -16,7 +28,7 @@ declare -g language=""
 declare -g keyboard_layout=""
 declare -g hostname=""
 declare -g username=""
-declare -g boot_mode=""
+declare -g BOOT_MODE=""
 declare -g TARGET_DISK=""
 declare -g REQUIRED_PACKAGES=(
     "base"
@@ -172,10 +184,10 @@ check_system_requirements() {
     
     # Verificar modo de arranque
     if [[ -d "/sys/firmware/efi/efivars" ]]; then
-        boot_mode="UEFI"
+        BOOT_MODE="UEFI"
         log "INFO" "Sistema en modo UEFI"
     else
-        boot_mode="BIOS"
+        BOOT_MODE="BIOS"
         log "INFO" "Sistema en modo BIOS"
     fi
     
@@ -343,7 +355,7 @@ prepare_disk() {
         return 1
     fi
     
-    if [[ "$boot_mode" == "UEFI" ]]; then
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
         create_uefi_partitions
     else
         create_bios_partitions
@@ -414,9 +426,9 @@ create_bios_partitions() {
     local root_part="${TARGET_DISK}2"
     local swap_part="${TARGET_DISK}3"
     
-    if ! mkfs.ext4 -F "$boot_part" && \
-       ! mkfs.ext4 -F "$root_part" && \
-       ! mkswap "$swap_part" && \
+    if ! mkfs.ext4 -F "$boot_part" || \
+       ! mkfs.ext4 -F "$root_part" || \
+       ! mkswap "$swap_part" || \
        ! swapon "$swap_part"; then
         log "ERROR" "Fallo al formatear particiones"
         return 1
@@ -430,6 +442,89 @@ create_bios_partitions() {
     log "INFO" "Particionamiento BIOS completado"
     return 0
 }
+
+# PARA UEFI
+
+create_uefi_partitions() {
+    log "INFO" "Creando particiones UEFI"
+    
+    # Calcular tamaños
+    local disk_size
+    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+    local efi_size=512
+    local swap_size
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    local root_size=$((disk_size - efi_size - swap_size))
+    
+    log "INFO" "Creando tabla de particiones GPT"
+    # Crear tabla GPT
+    if ! parted -s "$TARGET_DISK" mklabel gpt; then
+        log "ERROR" "Fallo al crear tabla GPT"
+        return 1
+    fi
+    
+    log "INFO" "Creando particiones"
+    # Crear particiones
+    if ! parted -s "$TARGET_DISK" \
+        mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
+        set 1 esp on \
+        mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
+        mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%; then
+        log "ERROR" "Fallo al crear particiones UEFI"
+        return 1
+    fi
+    
+    sleep 2  # Esperar a que el kernel detecte las nuevas particiones
+    
+    # Obtener nombres de las particiones
+    local efi_part="${TARGET_DISK}1"
+    local root_part="${TARGET_DISK}2"
+    local swap_part="${TARGET_DISK}3"
+    
+    log "INFO" "Formateando particiones"
+    # Formatear particiones
+    if ! mkfs.fat -F32 "$efi_part"; then
+        log "ERROR" "Fallo al formatear partición EFI"
+        return 1
+    fi
+    
+    if ! mkfs.ext4 -F "$root_part"; then
+        log "ERROR" "Fallo al formatear partición ROOT"
+        return 1
+    fi
+    
+    if ! mkswap "$swap_part"; then
+        log "ERROR" "Fallo al formatear partición SWAP"
+        return 1
+    fi
+    
+    if ! swapon "$swap_part"; then
+        log "ERROR" "Fallo al activar swap"
+        return 1
+    fi
+    
+    log "INFO" "Montando particiones"
+    # Montar particiones
+    if ! mount "$root_part" /mnt; then
+        log "ERROR" "Fallo al montar partición ROOT"
+        return 1
+    fi
+    
+    # Crear directorio EFI y montar
+    if ! mkdir -p /mnt/boot/efi; then
+        log "ERROR" "Fallo al crear directorio EFI"
+        return 1
+    fi
+    
+    if ! mount "$efi_part" /mnt/boot/efi; then
+        log "ERROR" "Fallo al montar partición EFI"
+        return 1
+    fi
+    
+    log "INFO" "Particionamiento UEFI completado exitosamente"
+    return 0
+}
+
 
 # ==============================================================================
 # Funciones de Instalación Base
@@ -765,3 +860,7 @@ cleanup() {
 
 # Iniciar instalación
 main "$@"
+if ! check_dependencies; then
+    log "ERROR" "Faltan dependencias necesarias"
+    exit 1
+fi

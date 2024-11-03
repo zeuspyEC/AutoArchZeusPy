@@ -505,33 +505,83 @@ return 1
 }
 
 # ==============================================================================
-# Funciones de Particionamiento e Instalación
+# Funciones de Particionamiento
 # ==============================================================================
 
 prepare_disk() {
-log "INFO" "Preparando disco para instalación"
-
-# Seleccionar disco
-select_installation_disk
-
-# Verificar si hay sistemas operativos existentes
-check_existing_os
-
-# Mostrar advertencia de borrado
-show_warning_message
-
-# Crear particiones según el modo de arranque
-if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    create_uefi_partitions
-else
-    create_bios_partitions
-fi
-
-# Verificar particiones creadas
-verify_partitions
-
-return 0
+    log "INFO" "Preparando disco para instalación"
+    
+    # Listar discos disponibles con información detallada
+    local available_disks
+    available_disks=($(lsblk -dpno NAME,SIZE,TYPE,MODEL | grep disk))
+    
+    echo -e "\n${PURPLE}Discos disponibles:${NC}\n"
+    printf '%s\n' "${available_disks[@]}" | nl
+    
+    # Buscar particiones existentes y sistemas operativos
+    echo -e "\n${PURPLE}Sistemas operativos detectados:${NC}\n"
+    for disk in "${available_disks[@]}"; do
+        local disk_name=$(echo "$disk" | cut -d' ' -f1)
+        echo -e "${CYAN}Analizando $disk_name:${NC}"
+        fdisk -l "$disk_name" 2>/dev/null || true
+        if command -v os-prober &>/dev/null; then
+            os-prober | grep "$disk_name" || true
+        fi
+    done
+    
+    # Seleccionar disco
+    while true; do
+        echo -e "\n${YELLOW}Seleccione el número del disco para la instalación:${NC}"
+        read -r disk_number
+        
+        if [[ $disk_number =~ ^[0-9]+$ ]] && \
+           [[ $disk_number -le ${#available_disks[@]} ]] && \
+           [[ $disk_number -gt 0 ]]; then
+            TARGET_DISK=$(echo "${available_disks[$((disk_number-1))]}" | cut -d' ' -f1)
+            break
+        fi
+        
+        log "WARN" "Selección inválida"
+    done
+    
+    # Buscar espacio libre
+    local free_space
+    free_space=$(parted "$TARGET_DISK" print free | grep "Free Space" | tail -n1)
+    
+    if [[ -n "$free_space" ]]; then
+        echo -e "\n${GREEN}Se encontró espacio libre en $TARGET_DISK:${NC}"
+        echo "$free_space"
+        
+        echo -e "${YELLOW}¿Desea usar este espacio libre para la instalación? (s/N):${NC}"
+        read -r use_free_space
+        
+        if [[ "$use_free_space" =~ ^[Ss]$ ]]; then
+            # Usar espacio libre existente
+            local start_sector=$(echo "$free_space" | awk '{print $1}')
+            local end_sector=$(echo "$free_space" | awk '{print $2}')
+            create_partitions_in_free_space "$TARGET_DISK" "$start_sector" "$end_sector"
+            return $?
+        fi
+    fi
+    
+    # Si no hay espacio libre o el usuario no quiere usarlo
+    echo -e "\n${ERROR}¡ADVERTENCIA!${NC}"
+    echo -e "${ERROR}Se borrarán todos los datos en $TARGET_DISK${NC}"
+    echo -e "${YELLOW}¿Está seguro que desea continuar? (s/N):${NC}"
+    read -r confirm
+    
+    if [[ ! $confirm =~ ^[Ss]$ ]]; then
+        log "INFO" "Operación cancelada por el usuario"
+        return 1
+    fi
+    
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        create_uefi_partitions
+    else
+        create_bios_partitions
+    fi
 }
+
 
 select_installation_disk() {
 local disk_list
@@ -596,187 +646,167 @@ done
 }
 
 create_uefi_partitions() {
-log "INFO" "Creando particiones UEFI"
+    log "INFO" "Creando particiones UEFI"
 
-# Calcular tamaños
-local disk_size
-disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
-local efi_size=512
-local swap_size
-swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-local root_size=$((disk_size - efi_size - swap_size))
+    # Calcular tamaños
+    local disk_size
+    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+    local efi_size=512
+    local swap_size
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    local root_size=$((disk_size - efi_size - swap_size))
 
-# Verificar espacio libre
-local free_space
-free_space=$(parted "$TARGET_DISK" print free | grep "Free Space" | tail -n1)
-
-if [[ -n "$free_space" ]]; then
-    echo -e "${GREEN}Se encontró espacio libre en $TARGET_DISK:${NC}"
-    echo "$free_space"
-    
-    echo -e "${BLUE}¿Desea usar este espacio libre para la instalación? (s/N):${NC}"
-    read -r use_free_space
-    
-    if [[ "$use_free_space" =~ ^[Ss]$ ]]; then
-        # Usar espacio libre existente
-        local start_sector=$(echo "$free_space" | awk '{print $1}')
-        local end_sector=$(echo "$free_space" | awk '{print $2}')
-        create_partitions_in_free_space "$TARGET_DISK" "$start_sector" "$end_sector"
-        return $?
+    # Crear tabla de particiones GPT
+    if ! parted -s "$TARGET_DISK" mklabel gpt; then
+        log "ERROR" "Fallo al crear tabla GPT"
+        return 1
     fi
-fi
 
-# Crear tabla de particiones GPT
-if ! parted -s "$TARGET_DISK" mklabel gpt; then
-    log "ERROR" "Fallo al crear tabla GPT"
-    return 1
-fi
+    # Crear particiones
+    if ! parted -s "$TARGET_DISK" \
+        mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
+        set 1 esp on \
+        mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
+        mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%; then
+        log "ERROR" "Fallo al crear particiones UEFI"
+        return 1
+    fi
 
-# Crear particiones
-if ! parted -s "$TARGET_DISK" \
-    mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
-    set 1 esp on \
-    mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
-    mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%; then
-    log "ERROR" "Fallo al crear particiones UEFI"
-    return 1
-fi
+    # Esperar a que el kernel detecte las nuevas particiones
+    sleep 2
 
-# Esperar a que el kernel detecte las nuevas particiones
-sleep 2
+    # Obtener nombres de las particiones
+    local efi_part="${TARGET_DISK}1"
+    local root_part="${TARGET_DISK}2"
+    local swap_part="${TARGET_DISK}3"
 
-# Obtener nombres de las particiones
-local efi_part="${TARGET_DISK}1"
-local root_part="${TARGET_DISK}2"
-local swap_part="${TARGET_DISK}3"
+    # Formatear particiones
+    if ! mkfs.fat -F32 "$efi_part"; then
+        log "ERROR" "Fallo al formatear partición EFI"
+        return 1
+    fi
 
-# Formatear particiones
-if ! mkfs.fat -F32 "$efi_part"; then
-    log "ERROR" "Fallo al formatear partición EFI"
-    return 1
-fi
+    if ! mkfs.ext4 -F "$root_part"; then
+        log "ERROR" "Fallo al formatear partición ROOT"
+        return 1
+    fi
 
-if ! mkfs.ext4 -F "$root_part"; then
-    log "ERROR" "Fallo al formatear partición ROOT"
-    return 1
-fi
+    if ! mkswap "$swap_part"; then
+        log "ERROR" "Fallo al formatear partición SWAP"
+        return 1
+    fi
+    if ! swapon "$swap_part"; then
+        log "ERROR" "Fallo al activar SWAP"
+        return 1
+    fi
 
-if ! mkswap "$swap_part"; then
-    log "ERROR" "Fallo al formatear partición SWAP"
-    return 1
-fi
-if ! swapon "$swap_part"; then
-    log "ERROR" "Fallo al activar SWAP"
-    return 1
-fi
+    # Montar particiones
+    if ! mount "$root_part" /mnt; then
+        log "ERROR" "Fallo al montar partición ROOT"
+        return 1
+    fi
 
-# Montar particiones
-if ! mount "$root_part" /mnt; then
-    log "ERROR" "Fallo al montar partición ROOT"
-    return 1
-fi
+    if ! mkdir -p /mnt/boot/efi; then
+        log "ERROR" "Fallo al crear directorio EFI"
+        return 1
+    fi
+    if ! mount "$efi_part" /mnt/boot/efi; then
+        log "ERROR" "Fallo al montar partición EFI"
+        return 1
+    fi
 
-if ! mkdir -p /mnt/boot/efi; then
-    log "ERROR" "Fallo al crear directorio EFI"
-    return 1
-fi
-if ! mount "$efi_part" /mnt/boot/efi; then
-    log "ERROR" "Fallo al montar partición EFI"
-    return 1
-fi
-
-log "SUCCESS" "Particionamiento UEFI completado exitosamente"
-return 0
+    log "SUCCESS" "Particionamiento UEFI completado exitosamente"
+    return 0
 }
 
+# Función para crear particiones en espacio libre
 create_partitions_in_free_space() {
-local disk="$1"
-local start="$2"
-local end="$3"
-
-log "INFO" "Creando particiones en espacio libre: $start - $end"
-
-# Calcular tamaños
-local total_space=$(($end - $start))
-local swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-local min_space=15360  # 15GB en MB
-
-if [[ "$total_space" -lt "$min_space" ]]; then
-    log "ERROR" "Espacio libre insuficiente"
-    return 1
-fi
-
-if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    # Crear particiones UEFI en espacio libre
-    parted -s "$disk" mkpart ESP fat32 "$start" "$((start + 512))MiB" set 1 esp on
-    parted -s "$disk" mkpart primary ext4 "$((start + 512))MiB" "$((end - swap_size))MiB"
-    parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
-else
-    # Crear particiones BIOS en espacio libre
-    parted -s "$disk" mkpart primary ext4 "$start" "$((end - swap_size))MiB"
-    parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
-fi
-
-return 0
+    local disk="$1"
+    local start="$2"
+    local end="$3"
+    
+    log "INFO" "Creando particiones en espacio libre: $start - $end"
+    
+    # Calcular tamaños
+    local total_space=$(($end - $start))
+    local swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    local min_space=15360  # 15GB en MB
+    
+    if [[ "$total_space" -lt "$min_space" ]]; then
+        log "ERROR" "Espacio libre insuficiente"
+        return 1
+    fi
+    
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        # Crear particiones UEFI en espacio libre
+        parted -s "$disk" mkpart ESP fat32 "$start" "$((start + 512))MiB" set 1 esp on
+        parted -s "$disk" mkpart primary ext4 "$((start + 512))MiB" "$((end - swap_size))MiB"
+        parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
+    else
+        # Crear particiones BIOS en espacio libre
+        parted -s "$disk" mkpart primary ext4 "$start" "$((end - swap_size))MiB"
+        parted -s "$disk" mkpart primary linux-swap "$((end - swap_size))MiB" "$end"
+    fi
+    
+    return 0
 }
 
 create_bios_partitions() {
-log "INFO" "Creando particiones BIOS"
-
-# Calcular tamaños
-local disk_size
-disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
-local boot_size=512
-local swap_size
-swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-local root_size=$((disk_size - boot_size - swap_size))
-
-# Crear tabla de particiones MBR
-if ! parted -s "$TARGET_DISK" mklabel msdos; then
-    log "ERROR" "Fallo al crear tabla MBR"
-    return 1
-fi
-
-# Crear particiones
-if ! parted -s "$TARGET_DISK" \
-    mkpart primary ext4 1MiB "${boot_size}MiB" \
-    set 1 boot on \
-    mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
-    mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%; then
-    log "ERROR" "Fallo al crear particiones BIOS"
-    return 1
-fi
-
-# Obtener nombres de las particiones
-local boot_part="${TARGET_DISK}1"
-local root_part="${TARGET_DISK}2"
-local swap_part="${TARGET_DISK}3"
-
-# Formatear particiones
-if ! mkfs.ext4 -F "$boot_part" || \
-   ! mkfs.ext4 -F "$root_part" || \
-   ! mkswap "$swap_part" || \
-   ! swapon "$swap_part"; then
-    log "ERROR" "Fallo al formatear particiones"
-    return 1
-fi
-
-# Montar particiones
-if ! mount "$root_part" /mnt; then
-    log "ERROR" "Fallo al montar partición ROOT"
-    return 1
-fi
-if ! mkdir -p /mnt/boot; then
-    log "ERROR" "Fallo al crear directorio BOOT"
-    return 1
-fi
-if ! mount "$boot_part" /mnt/boot; then
-    log "ERROR" "Fallo al montar partición BOOT"
-    return 1
-fi
-
-log "SUCCESS" "Particionamiento BIOS completado exitosamente"
-return 0
+    log "INFO" "Creando particiones BIOS"
+    
+    # Calcular tamaños
+    local disk_size
+    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+    local boot_size=512
+    local swap_size
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    local root_size=$((disk_size - boot_size - swap_size))
+    
+    # Crear tabla MBR
+    if ! parted -s "$TARGET_DISK" mklabel msdos; then
+        log "ERROR" "Fallo al crear tabla MBR"
+        return 1
+    fi
+    
+    # Crear particiones
+    if ! parted -s "$TARGET_DISK" \
+        mkpart primary ext4 1MiB "${boot_size}MiB" \
+        set 1 boot on \
+        mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
+        mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%; then
+        log "ERROR" "Fallo al crear particiones BIOS"
+        return 1
+    fi
+    
+    # Formatear particiones
+    local boot_part="${TARGET_DISK}1"
+    local root_part="${TARGET_DISK}2"
+    local swap_part="${TARGET_DISK}3"
+    
+    if ! mkfs.ext4 -F "$boot_part" || \
+       ! mkfs.ext4 -F "$root_part" || \
+       ! mkswap "$swap_part" || \
+       ! swapon "$swap_part"; then
+        log "ERROR" "Fallo al formatear particiones"
+        return 1
+    fi
+    
+    # Montar particiones
+    if ! mount "$root_part" /mnt; then
+        log "ERROR" "Fallo al montar partición ROOT"
+        return 1
+    fi
+    if ! mkdir -p /mnt/boot; then
+        log "ERROR" "Fallo al crear directorio BOOT"
+        return 1
+    fi
+    if ! mount "$boot_part" /mnt/boot; then
+        log "ERROR" "Fallo al montar partición BOOT"
+        return 1
+    fi
+    
+    log "SUCCESS" "Particionamiento BIOS completado exitosamente"
+    return 0
 }
 
 verify_partitions() {

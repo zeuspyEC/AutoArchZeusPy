@@ -28,7 +28,6 @@ HEADER="${PURPLE}"
 INPUT="${YELLOW}"
 PRIMARY="${BLUE}"
 BOLD='\033[1m'
-
 # Variables globales
 declare -g SCRIPT_VERSION="3.0.1"
 declare -g BOOT_MODE=""
@@ -82,7 +81,7 @@ log() {
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     local function_name="${FUNCNAME[1]:-main}"
-    local line_number="${BASH_LINENO[0}"
+    local line_number="${BASH_LINENO[0]}"
     
     # Formato de log mejorado
     local log_entry="[$timestamp] [$level] [$function_name:$line_number] $message"
@@ -126,16 +125,16 @@ execute_with_log() {
     local command=("$@")
     local function_name="${FUNCNAME[1]:-main}"
     
-    log "DEBUG" "Ejecutando: ${command[*}"
+    log "DEBUG" "Ejecutando: ${command[*]}"
     
-    if output=$("${command[@}" 2>&1); then
-        log "SUCCESS" "Comando exitoso: ${command[*}"
+    if output=$("${command[@]}" 2>&1); then
+        log "SUCCESS" "Comando exitoso: ${command[*]}"
         log "DEBUG" "Salida: $output"
         echo "$output"
         return 0
     else
         local exit_code=$?
-        log "ERROR" "Comando falló ($exit_code): ${command[*}"
+        log "ERROR" "Comando falló ($exit_code): ${command[*]}"
         log "ERROR" "Salida: $output"
         return $exit_code
     fi
@@ -150,11 +149,11 @@ show_menu() {
     echo -e "\n${PURPLE}${BOLD}$title${NC}"
     echo -e "${PURPLE}$(printf '%*s' "${#title}" '' | tr ' ' '═')${NC}\n"
     
-    for i in "${!options[@}"; do
-        echo -e "${PRIMARY}$((i+1)). ${CYAN}${options[$i}${NC}"
+    for i in "${!options[@]}"; do
+        echo -e "${PRIMARY}$((i+1)). ${CYAN}${options[$i]}${NC}"
     done
     
-    echo -e "\n${YELLOW}Seleccione una opción (1-${#options[@}): ${NC}"
+    echo -e "\n${YELLOW}Seleccione una opción (1-${#options[@]}): ${NC}"
 }
 
 # Función para mostrar progreso
@@ -214,7 +213,7 @@ check_dependencies() {
     
     echo -e "\n${PURPLE}Verificando dependencias requeridas:${NC}\n"
     
-    for dep in "${deps[@}"; do
+    for dep in "${deps[@]}"; do
         echo -ne "${CYAN}Verificando $dep... ${NC}"
         if command -v "$dep" >/dev/null 2>&1; then
             echo -e "${GREEN}✔${NC}"
@@ -224,8 +223,8 @@ check_dependencies() {
         fi
     done
     
-    if ((${#missing_deps[@} > 0)); then
-        log "ERROR" "Faltan las siguientes dependencias: ${missing_deps[*}"
+    if ((${#missing_deps[@]} > 0)); then
+        log "ERROR" "Faltan las siguientes dependencias: ${missing_deps[*]}"
         return 1
     fi
     
@@ -307,7 +306,7 @@ verify_disk_space() {
         fi
     done <<< "$disk_list"
     
-    if ((${#valid_disks[@} == 0)); then
+    if ((${#valid_disks[@]} == 0)); then
         log "ERROR" "No se encontró ningún disco con suficiente espacio (mínimo 15GB)"
         return 1
     fi
@@ -323,8 +322,8 @@ check_network_connectivity() {
     
     echo -e "\n${PURPLE}Probando conectividad:${NC}\n"
     
-    for host in "${test_hosts[@}"; do
-        echo -ne "${INFO}Probando conexión a $host... ${NC}"
+    for host in "${test_hosts[@]}"; do
+        echo -ne "${INFO]}Probando conexión a $host... ${NC}"
         if ping -c 1 -W 5 "$host" &>/dev/null; then
             echo -e "${GREEN}✔${NC}"
             connected=true
@@ -368,26 +367,26 @@ setup_wifi_connection() {
     local wireless_interfaces
     wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]"))
     
-    if ((${#wireless_interfaces[@} == 0)); then
+    if ((${#wireless_interfaces[@]} == 0)); then
         log "ERROR" "No se detectaron interfaces wireless"
         return 1
     fi
     
     echo -e "\n${PURPLE}Interfaces Wi-Fi disponibles:${NC}\n"
-    for i in "${!wireless_interfaces[@}"; do
-        echo -e "${PRIMARY}$((i+1)). ${wireless_interfaces[$i}${NC}"
+    for i in "${!wireless_interfaces[@]}"; do
+        echo -e "${PRIMARY}$((i+1)). ${wireless_interfaces[$i]}${NC}"
     done
     
-    echo -e "\n${YELLOW}Seleccione una interfaz (1-${#wireless_interfaces[@}): ${NC}"
+    echo -e "\n${YELLOW}Seleccione una interfaz (1-${#wireless_interfaces[@]}): ${NC}"
     read -r interface_number
     
     if ! [[ "$interface_number" =~ ^[0-9]+$ ]] || \
-       ((interface_number < 1 || interface_number > ${#wireless_interfaces[@})); then
+       ((interface_number < 1 || interface_number > ${#wireless_interfaces[@]})); then
         log "ERROR" "Selección inválida"
         return 1
     fi
     
-    local selected_interface=${wireless_interfaces[$((interface_number-1))}
+    local selected_interface=${wireless_interfaces[$((interface_number-1))]}
     
     # Escanear redes
     log "INFO" "Escaneando redes disponibles..."
@@ -425,14 +424,14 @@ setup_ethernet_connection() {
     local ethernet_interfaces
     ethernet_interfaces=($(ip link show | grep -E "^[0-9]+: en|^[0-9]+: eth" | cut -d: -f2))
     
-    if ((${#ethernet_interfaces[@} == 0)); then
+    if ((${#ethernet_interfaces[@]} == 0)); then
         log "ERROR" "No se detectaron interfaces ethernet"
         return 1
     fi
     
     echo -e "\n${PURPLE}Interfaces Ethernet disponibles:${NC}\n"
     
-    for interface in "${ethernet_interfaces[@}"; do
+    for interface in "${ethernet_interfaces[@]}"; do
         interface=$(echo "$interface" | tr -d ' ')
         echo -ne "${CYAN}Configurando $interface... ${NC}"
         
@@ -490,16 +489,16 @@ select_installation_disk() {
     local disk_array=()
     while IFS= read -r disk_info; do
         disk_array+=("$disk_info")
-        local number=$((${#disk_array[@}))
+        local number=$((${#disk_array[@]}))
         echo -e "${PRIMARY}$number. ${CYAN}$disk_info${NC}"
     done <<< "$disk_list"
     
     while true; do
-        echo -e "\n${YELLOW}Seleccione el disco para la instalación (1-${#disk_array[@}): ${NC}"
+        echo -e "\n${YELLOW}Seleccione el disco para la instalación (1-${#disk_array[@]}): ${NC}"
         read -r selection
         
-        if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection > 0 && selection <= ${#disk_array[@})); then
-            TARGET_DISK=$(echo "${disk_array[$((selection-1))}" | awk '{print $1}')
+        if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection > 0 && selection <= ${#disk_array[@]})); then
+            TARGET_DISK=$(echo "${disk_array[$((selection-1))]}" | awk '{print $1}')
             break
         fi
         echo -e "${ERROR}Selección inválida${NC}"
@@ -835,10 +834,10 @@ install_base_system() {
     
     # Instalar sistema base
     echo -e "\n${PURPLE}Instalando paquetes base:${NC}\n"
-    local total_packages=${#REQUIRED_PACKAGES[@}
+    local total_packages=${#REQUIRED_PACKAGES[@]}
     local current=0
     
-    for package in "${REQUIRED_PACKAGES[@}"; do
+    for package in "${REQUIRED_PACKAGES[@]}"; do
         ((current++))
         echo -ne "${CYAN}Instalando $package... ${NC}"
         if pacstrap /mnt "$package" &>/dev/null; then
@@ -912,10 +911,10 @@ configure_system() {
         "configure_bootloader"
     )
     
-    local total_steps=${#config_functions[@}
+    local total_steps=${#config_functions[@]}
     local current=0
     
-    for func in "${config_functions[@}"; do
+    for func in "${config_functions[@]}"; do
         ((current++))
         echo -e "\n${PURPLE}[${current}/${total_steps}] Ejecutando: ${func//_/ }${NC}"
         if ! $func; then
@@ -963,7 +962,7 @@ configure_timezone() {
     
     echo -e "\n${PURPLE}Zonas horarias disponibles:${NC}\n"
     
-    select TIMEZONE in "${zones[@}"; do
+    select TIMEZONE in "${zones[@]}"; do
         if [[ -n "$TIMEZONE" ]]; then
             break
         fi
@@ -1131,10 +1130,10 @@ main() {
     )
     
     # Ejecutar pasos de instalación con progreso
-    local total_steps=${#installation_steps[@}
+    local total_steps=${#installation_steps[@]}
     local current=0
     
-    for step in "${installation_steps[@}"; do
+    for step in "${installation_steps[@]}"; do
         ((current++))
         echo -e "\n${HEADER}[${current}/${total_steps}] ${step//_/ }${NC}"
         if ! $step; then

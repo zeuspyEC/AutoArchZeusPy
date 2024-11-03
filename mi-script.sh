@@ -205,18 +205,22 @@ check_system_requirements() {
     fi
     
     # Verificar arquitectura
-    if [[ "$(uname -m)" != "x86_64" ]]; then
-        log "ERROR" "Arquitectura no soportada: $(uname -m)"
-        dialog_wrapper "Error" --title "Error" --msgbox "Arquitectura no soportada.\nSe requiere un sistema x86_64." 7 50
-        return 1
-    fi  
+    local arch
+    arch=$(uname -m)
     
-    # Verificar modo UEFI 
-    if [[ ! -d "/sys/firmware/efi/efivars" ]]; then
-        log "WARN" "Sistema no arrancado en modo UEFI"
-        if ! dialog_wrapper "Advertencia" --title "Advertencia" --yesno "El sistema no está en modo UEFI.\n¿Desea continuar de todos modos?" 7 50; then  
-            return 1
-        fi
+    if [[ "$arch" != "x86_64" && "$arch" != "i686" ]]; then
+        log "ERROR" "Arquitectura no soportada: $arch"
+        dialog_wrapper "Error" --title "Error" --msgbox "Arquitectura no soportada.\nSe requiere un sistema x86_64 o i686." 7 50
+        return 1
+    fi
+    
+    # Verificar modo de arranque (UEFI o BIOS)
+    if [[ -d "/sys/firmware/efi/efivars" ]]; then
+        log "INFO" "Sistema en modo UEFI"
+        boot_mode="UEFI"
+    else
+        log "INFO" "Sistema en modo BIOS"
+        boot_mode="BIOS"
     fi
     
     log "INFO" "Requisitos del sistema verificados correctamente"
@@ -392,90 +396,133 @@ fi
 echo "$partitions"
 return 0
 }
+
 # Función para particionar el disco
-partition_disk() { local device="$1" log "INFO" "Iniciando particionamiento de disco: $device"
-
-if ! dialog_wrapper "Advertencia" --title "Advertencia" \
-        --yesno "¡ADVERTENCIA!\n\nSe borrarán todos los datos en $device.\n¿Está seguro de continuar?" 10 50; then
-    log "INFO" "Usuario canceló el particionamiento"
-    return 1
-fi
-
-# Calcular tamaños
-local total_size
-local boot_size=512  # MB
-local swap_size
-local root_size
-
-total_size=$(blockdev --getsize64 "$device" | awk '{print int($1/1024/1024)}')  # En MB
-swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-root_size=$((total_size - boot_size - swap_size))
-
-log "INFO" "Creando tabla de particiones GPT"
-
-# Crear particiones
-local commands=(
-    "parted -s $device mklabel gpt"
-    "parted -s $device mkpart ESP fat32 1MiB ${boot_size}MiB"
-    "parted -s $device set 1 esp on"
-    "parted -s $device mkpart primary ext4 ${boot_size}MiB $((boot_size + root_size))MiB"
-    "parted -s $device mkpart primary linux-swap $((boot_size + root_size))MiB 100%"
-)
-
-for cmd in "${commands[@]}"; do
-    if ! execute_with_log $cmd; then
-        log "ERROR" "Fallo al ejecutar: $cmd"
+partition_disk() {
+    local device="$1"
+    log "INFO" "Iniciando particionamiento de disco: $device"
+    
+    if ! dialog_wrapper "Advertencia" --title "Advertencia" \
+            --yesno "¡ADVERTENCIA!\n\nSe borrarán todos los datos en $device.\n¿Está seguro de continuar?" 10 50; then
+        log "INFO" "Usuario canceló el particionamiento"
         return 1
     fi
-done
-
-# Formatear particiones
-if ! execute_with_log mkfs.fat -F32 "${device}1"; then
-    log "ERROR" "Fallo al formatear partición boot"
-    return 1
-fi
-
-if ! execute_with_log mkfs.ext4 -F "${device}2"; then
-    log "ERROR" "Fallo al formatear partición root"
-    return 1
-fi
-
-if ! execute_with_log mkswap "${device}3"; then
-    log "ERROR" "Fallo al crear swap"
-    return 1
-fi
-
-if ! execute_with_log swapon "${device}3"; then
-    log "ERROR" "Fallo al activar swap"
-    return 1
-fi
-
-log "INFO" "Particionamiento completado exitosamente"
-return 0
+    
+    # Calcular tamaños
+    local total_size
+    local boot_size=512  # MB
+    local swap_size
+    local root_size
+    
+    total_size=$(blockdev --getsize64 "$device" | awk '{print int($1/1024/1024)}')  # En MB
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    root_size=$((total_size - boot_size - swap_size))
+    
+    if [[ "$boot_mode" == "UEFI" ]]; then
+        log "INFO" "Creando tabla de particiones GPT para UEFI"
+        
+        # Crear particiones para UEFI
+        local commands=(
+            "parted -s $device mklabel gpt"
+            "parted -s $device mkpart ESP fat32 1MiB ${boot_size}MiB"
+            "parted -s $device set 1 esp on"
+            "parted -s $device mkpart primary ext4 ${boot_size}MiB $((boot_size + root_size))MiB"
+            "parted -s $device mkpart primary linux-swap $((boot_size + root_size))MiB 100%"
+        )
+    else
+        log "INFO" "Creando tabla de particiones MBR para BIOS"
+        
+        # Crear particiones para BIOS
+        local commands=(
+            "parted -s $device mklabel msdos"
+            "parted -s $device mkpart primary ext4 1MiB $((boot_size + root_size))MiB"
+            "parted -s $device set 1 boot on"
+            "parted -s $device mkpart primary linux-swap $((boot_size + root_size))MiB 100%"
+        )
+    fi
+    
+    for cmd in "${commands[@]}"; do
+        if ! execute_with_log $cmd; then
+            log "ERROR" "Fallo al ejecutar: $cmd"
+            return 1
+        fi
+    done
+    
+    # Formatear particiones
+    if [[ "$boot_mode" == "UEFI" ]]; then
+        if ! execute_with_log mkfs.fat -F32 "${device}1"; then
+            log "ERROR" "Fallo al formatear partición ESP"
+            return 1
+        fi
+        
+        if ! execute_with_log mkfs.ext4 -F "${device}2"; then
+            log "ERROR" "Fallo al formatear partición root"
+            return 1
+        fi
+        
+        if ! execute_with_log mkswap "${device}3"; then
+            log "ERROR" "Fallo al crear swap"
+            return 1
+        fi
+        
+        if ! execute_with_log swapon "${device}3"; then
+            log "ERROR" "Fallo al activar swap"
+            return 1
+        fi
+    else
+        if ! execute_with_log mkfs.ext4 -F "${device}1"; then
+            log "ERROR" "Fallo al formatear partición root"
+            return 1
+        fi
+        
+        if ! execute_with_log mkswap "${device}2"; then
+            log "ERROR" "Fallo al crear swap"
+            return 1
+        fi
+        
+        if ! execute_with_log swapon "${device}2"; then
+            log "ERROR" "Fallo al activar swap"
+            return 1
+        fi
+    fi
+    
+    log "INFO" "Particionamiento completado exitosamente"
+    return 0
 }
-# Función para montar particiones
-mount_partitions() { log "INFO" "Montando particiones"
 
-# Montar partición root
-if ! execute_with_log mount "${selected_partition}2" /mnt; then
-    log "ERROR" "Fallo al montar partición root"
-    return 1
-fi
-
-# Crear y montar partición boot
-if ! execute_with_log mkdir -p /mnt/boot; then
-    log "ERROR" "Fallo al crear directorio boot"
-    return 1
-fi
-
-if ! execute_with_log mount "${selected_partition}1" /mnt/boot; then
-    log "ERROR" "Fallo al montar partición boot"
-    return 1
-fi
-
-log "INFO" "Particiones montadas correctamente"
-return 0
+# Función para montar particiones  
+mount_partitions() {
+    log "INFO" "Montando particiones"
+    
+    if [[ "$boot_mode" == "UEFI" ]]; then
+        # Montar partición root
+        if ! execute_with_log mount "${selected_partition}2" /mnt; then
+            log "ERROR" "Fallo al montar partición root"
+            return 1
+        fi
+        
+        # Crear y montar partición ESP
+        if ! execute_with_log mkdir -p /mnt/efi; then
+            log "ERROR" "Fallo al crear directorio EFI"
+            return 1
+        fi
+        
+        if ! execute_with_log mount "${selected_partition}1" /mnt/efi; then
+            log "ERROR" "Fallo al montar partición ESP"
+            return 1
+        fi
+    else
+        # Montar partición root
+        if ! execute_with_log mount "${selected_partition}1" /mnt; then
+            log "ERROR" "Fallo al montar partición root"
+            return 1
+        fi
+    fi
+    
+    log "INFO" "Particiones montadas correctamente"
+    return 0
 }
+
 # Función para instalar sistema base
 install_base_system() { log "INFO" "Instalando sistema base"
 

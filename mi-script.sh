@@ -5,17 +5,29 @@
 # Versión: 2.0
 # Descripción: Script completo con validaciones exhaustivas y manejo de errores
 # ==============================================================================
+
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
 
 # Variables globales
+declare -g SCRIPT_VERSION="2.0"
 declare -g selected_partition=""
 declare -g language=""
 declare -g keyboard_layout=""
 declare -g hostname=""
 declare -g username=""
 declare -g boot_mode=""
+declare -g TARGET_DISK=""
+declare -g REQUIRED_PACKAGES=(
+    "base"
+    "base-devel"
+    "linux"
+    "linux-firmware"
+    "networkmanager"
+    "grub"
+    "efibootmgr"
+)
 
 # Configuración del sistema de logging
 LOG_FILE="/tmp/arch_installer.log"

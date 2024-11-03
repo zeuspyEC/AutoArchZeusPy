@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+
 # ==============================================================================
 # ZeuspyEC Arch Linux Installer
 # Versión: 3.0.1
@@ -111,11 +114,14 @@ log() {
 print_system_info() {
     echo -e "${PURPLE}=== Información del Sistema ===${NC}"
     {
-        echo -e "${WHITE}Kernel:${NC} $(uname -r)"
-        echo -e "${WHITE}CPU:${NC} $(grep "model name" /proc/cpuinfo | head -n1)"
-        echo -e "${WHITE}Memoria:${NC} $(free -h)"
-        echo -e "${WHITE}Disco:${NC} $(df -h)"
-        echo -e "${WHITE}Red:${NC} $(ip addr)"
+        printf "${WHITE}%-15s${NC} %s\n" "Kernel:" "$(uname -r)"
+        printf "${WHITE}%-15s${NC} %s\n" "CPU:" "$(grep "model name" /proc/cpuinfo | head -n1 | cut -d: -f2 | xargs)"
+        printf "${WHITE}%-15s${NC}\n" "Memoria:"
+        free -h | sed 's/^/    /'
+        printf "${WHITE}%-15s${NC}\n" "Disco:"
+        df -h | sed 's/^/    /'
+        printf "${WHITE}%-15s${NC}\n" "Red:"
+        ip -br addr show | sed 's/^/    /'
         echo -e "${PURPLE}===========================${NC}"
     } 2>/dev/null || true
 }
@@ -299,10 +305,10 @@ verify_disk_space() {
         local disk_model=$(echo "$disk_info" | awk '{$1=$2=$3=""; print $0}' | xargs)
         
         if ((disk_size >= min_space)); then
-            echo -e "${GREEN}$disk_count. $disk_name - $(numfmt --to=iec-i --suffix=B "$disk_size") - $disk_model${NC}"
+            echo -e "${GREEN}$disk_count. $disk_name - $(numfmt --to=iec --suffix=B "$size") - $disk_model${NC}"
             valid_disks+=("$disk_name")
         else
-            echo -e "${ERROR}$disk_count. $disk_name - $(numfmt --to=iec-i --suffix=B "$disk_size") - $disk_model (Espacio insuficiente)${NC}"
+            echo -e "${ERROR}$disk_count. $disk_name - $(numfmt --to=iec --suffix=B "$size") - $disk_model (Espacio insuficiente)${NC}"
         fi
     done <<< "$disk_list"
     
@@ -422,7 +428,7 @@ setup_ethernet_connection() {
     log "INFO" "Configurando conexión ethernet"
     
     local ethernet_interfaces
-    ethernet_interfaces=($(ip link show | grep -E "^[0-9]+: en|^[0-9]+: eth" | cut -d: -f2))
+    ethernet_interfaces=($(ip -br addr show | grep -E "^[0-9]+: en|^[0-9]+: eth" | cut -d: -f2))
     
     if ((${#ethernet_interfaces[@]} == 0)); then
         log "ERROR" "No se detectaron interfaces ethernet"
@@ -482,7 +488,7 @@ prepare_disk() {
 
 select_installation_disk() {
     local disk_list
-    disk_list=$(lsblk -dpno NAME,SIZE,TYPE,MODEL | grep disk)
+    disk_list=$(lsblk -o NAME,SIZE,TYPE,MOUNTPOINT --noheadings | grep disk)
     
     echo -e "\n${PURPLE}Discos disponibles para instalación:${NC}\n"
     

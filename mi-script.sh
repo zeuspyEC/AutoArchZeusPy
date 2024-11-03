@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# ZeuspyEC Arch Linux Installer
-# Versión: 3.0.1
-# ==============================================================================
+#!/usr/bin/env bash
 
-# Modificar la sección inicial del script para manejar mejor los locales
+# Configuración inicial de locale
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
@@ -15,17 +12,40 @@ setup_initial_locale() {
     # Verificar si existe el directorio de locales
     if [[ ! -d "/usr/share/locale" ]]; then
         mkdir -p /usr/share/locale
-    }
+    fi  # Aquí estaba el error - se usaba } en lugar de fi
     
     # Asegurarse de que el locale C.UTF-8 esté disponible
     if ! locale -a | grep -q "C.UTF-8"; then
         echo "C.UTF-8 UTF-8" > /etc/locale.gen
         locale-gen
     fi
+}
+
+# Función init_script modificada
+init_script() {
+    # Configurar locale inicial
+    setup_initial_locale
     
-    # Configurar locale temporal para la instalación
-    export LANG=C.UTF-8
-    export LC_ALL=C.UTF-8
+    # Crear archivos de log
+    : > "$LOG_FILE"
+    : > "$ERROR_LOG"  
+    : > "$DEBUG_LOG"
+    
+    # Mostrar banner
+    display_banner
+    
+    # Verificar root
+    if [[ $EUID -ne 0 ]]; then
+        log "ERROR" "Este script debe ejecutarse como root"
+        exit 1
+    fi
+    
+    # Verificar dependencias
+    check_dependencies
+    
+    # Mostrar información inicial
+    log "INFO" "Iniciando ZeuspyEC Arch Linux Installer v${SCRIPT_VERSION}"
+    print_system_info
 }
 
 # Habilitar modo estricto
@@ -224,33 +244,6 @@ show_progress() {
     printf "%${filled}s" | tr ' ' '█'
     printf "%${empty}s" | tr ' ' '░'  
     printf "${CYAN}] %3d%%${NC}" "$percent"
-}
-
-# Inicialización del script
-init_script() {
-    # Configurar locale inicial
-    setup_initial_locale
-    
-    # Crear archivos de log
-    : > "$LOG_FILE"
-    : > "$ERROR_LOG"  
-    : > "$DEBUG_LOG"
-    
-    # Mostrar banner
-    display_banner
-    
-    # Verificar root
-    if [[ $EUID -ne 0 ]]; then
-        log "ERROR" "Este script debe ejecutarse como root"
-        exit 1
-    fi
-    
-    # Verificar dependencias
-    check_dependencies
-    
-    # Mostrar información inicial
-    log "INFO" "Iniciando ZeuspyEC Arch Linux Installer v${SCRIPT_VERSION}"
-    print_system_info
 }
 
 # ==============================================================================

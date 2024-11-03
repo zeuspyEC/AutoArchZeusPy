@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-#!/usr/bin/env bash
 
 # Configuración inicial de locale
 export LANG=C.UTF-8

@@ -10,25 +10,29 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Sistema de colores y estilos mejorado
-declare -g COLORS=(
-    [RESET]='\033[0m'
-    [BOLD]='\033[1m'
-    [DIM]='\033[2m'
-    [ITALIC]='\033[3m'
-    [UNDERLINE]='\033[4m'
+# Declarar el array asociativo antes de usarlo
+declare -A COLORS
+
+# Definir los colores
+COLORS=(
+    ["RESET"]='\033[0m'
+    ["BOLD"]='\033[1m'
+    ["DIM"]='\033[2m'
+    ["ITALIC"]='\033[3m'
+    ["UNDERLINE"]='\033[4m'
     
     # Colores primarios optimizados para fondo negro
-    [PRIMARY]='\033[38;2;72;185;255m'      # Azul brillante
-    [SUCCESS]='\033[38;2;0;255;127m'       # Verde brillante
-    [WARNING]='\033[38;2;255;185;0m'       # Naranja brillante
-    [ERROR]='\033[38;2;255;85;85m'         # Rojo brillante
-    [INFO]='\033[38;2;220;220;220m'        # Blanco suave
+    ["PRIMARY"]='\033[38;2;72;185;255m'      # Azul brillante
+    ["SUCCESS"]='\033[38;2;0;255;127m'       # Verde brillante
+    ["WARNING"]='\033[38;2;255;185;0m'       # Naranja brillante
+    ["ERROR"]='\033[38;2;255;85;85m'         # Rojo brillante
+    ["INFO"]='\033[38;2;220;220;220m'        # Blanco suave
     
     # Colores especiales
-    [HEADER]='\033[38;2;147;112;219m'      # Púrpura suave
-    [INPUT]='\033[38;2;255;215;0m'         # Dorado
-    [HINT]='\033[38;2;169;169;169m'        # Gris medio
-    [BANNER]='\033[38;2;0;191;255m'        # Azul cielo brillante
+    ["HEADER"]='\033[38;2;147;112;219m'      # Púrpura suave
+    ["INPUT"]='\033[38;2;255;215;0m'         # Dorado
+    ["HINT"]='\033[38;2;169;169;169m'        # Gris medio
+    ["BANNER"]='\033[38;2;0;191;255m'        # Azul cielo brillante
 )
 
 # Variables globales

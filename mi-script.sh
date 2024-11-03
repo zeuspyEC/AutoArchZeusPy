@@ -1,55 +1,17 @@
 #!/usr/bin/env bash
 
-# Configuración inicial de locale
-export LANG=C.UTF-8
-export LC_ALL=C.UTF-8
-
-# Función para verificar y generar locales necesarios
-setup_initial_locale() {
-    log "INFO" "Configurando locale inicial"
-    
-    # Verificar si existe el directorio de locales
-    if [[ ! -d "/usr/share/locale" ]]; then
-        mkdir -p /usr/share/locale
-    fi  # Aquí estaba el error - se usaba } en lugar de fi
-    
-    # Asegurarse de que el locale C.UTF-8 esté disponible
-    if ! locale -a | grep -q "C.UTF-8"; then
-        echo "C.UTF-8 UTF-8" > /etc/locale.gen
-        locale-gen
-    fi
-}
-
-# Función init_script modificada
-init_script() {
-    # Configurar locale inicial
-    setup_initial_locale
-    
-    # Crear archivos de log
-    : > "$LOG_FILE"
-    : > "$ERROR_LOG"  
-    : > "$DEBUG_LOG"
-    
-    # Mostrar banner
-    display_banner
-    
-    # Verificar root
-    if [[ $EUID -ne 0 ]]; then
-        log "ERROR" "Este script debe ejecutarse como root"
-        exit 1
-    fi
-    
-    # Verificar dependencias
-    check_dependencies
-    
-    # Mostrar información inicial
-    log "INFO" "Iniciando ZeuspyEC Arch Linux Installer v${SCRIPT_VERSION}"
-    print_system_info
-}
+# ==============================================================================
+# ZeuspyEC Arch Linux Installer
+# Versión: 3.0.1
+# ==============================================================================
 
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
+
+# Configuración inicial de locale
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
 # Definición de colores
 RED='\033[0;31m'
@@ -96,26 +58,7 @@ declare -g REQUIRED_PACKAGES=(
     "git"
 )
 
-# Función para mostrar el banner de ZeuspyEC
-display_banner() {
-    echo -e "${BLUE}"
-    cat << "EOF" 
- ▒███████▒▓█████  █    ██   ██████  ██▓███   ▓██   ██▓▓█████  ▄████▄  
-▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒  ▒██  ██▒▓█   ▀ ▒██▀ ▀█  
-░ ▒ ▄▀▒░ ▒███   ▓██  ▒██░░ ▓██▄   ▓██░ ██▓▒   ▒██ ██░▒███   ▒▓█    ▄ 
-  ▄▀▒   ░▒▓█  ▄ ▓▓█  ░██░  ▒   ██▒▒██▄█▓▒ ▒   ░ ▐██▓░▒▓█  ▄ ▒▓▓▄ ▄██▒
-▒███████▒░▒████▒▒▒█████▓ ▒██████▒▒▒██▒ ░  ░   ░ ██▒▓░░▒████▒▒ ▓███▀ ░
-░▒▒ ▓░▒░▒░░ ▒░ ░░▒▓▒ ▒ ▒ ▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░    ██▒▒▒ ░░ ▒░ ░░ ░▒ ▒  ░
-░░▒ ▒ ░ ▒ ░ ░  ░░░▒░ ░ ░ ░ ░▒  ░ ░░▒ ░      ▓██ ░▒░  ░ ░  ░  ░  ▒   
-░ ░ ░ ░ ░   ░    ░░░ ░ ░ ░  ░  ░  ░░        ▒ ▒ ░░     ░   ░        
-  ░ ░       ░  ░   ░           ░            ░ ░        ░  ░ ░      
-░                                           ░ ░                     
-EOF
-    echo -e "${NC}"  
-    echo -e "${GREEN}Version ${SCRIPT_VERSION} - By ZeuspyEC ~ https://github.com/zeuspyEC/${NC}\n"
-}
-
-# Función de logging
+# Función de logging (debe estar definida antes de usarla en otras funciones)
 log() {
     local level="$1"
     shift  
@@ -145,6 +88,41 @@ log() {
             print_system_info >> "$ERROR_LOG"
             ;;
     esac
+}
+
+# Función para mostrar el banner
+display_banner() {
+    echo -e "${BLUE}"
+    cat << "EOF" 
+ ▒███████▒▓█████  █    ██   ██████  ██▓███   ▓██   ██▓▓█████  ▄████▄  
+▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒  ▒██  ██▒▓█   ▀ ▒██▀ ▀█  
+░ ▒ ▄▀▒░ ▒███   ▓██  ▒██░░ ▓██▄   ▓██░ ██▓▒   ▒██ ██░▒███   ▒▓█    ▄ 
+  ▄▀▒   ░▒▓█  ▄ ▓▓█  ░██░  ▒   ██▒▒██▄█▓▒ ▒   ░ ▐██▓░▒▓█  ▄ ▒▓▓▄ ▄██▒
+▒███████▒░▒████▒▒▒█████▓ ▒██████▒▒▒██▒ ░  ░   ░ ██▒▓░░▒████▒▒ ▓███▀ ░
+░▒▒ ▓░▒░▒░░ ▒░ ░░▒▓▒ ▒ ▒ ▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░    ██▒▒▒ ░░ ▒░ ░░ ░▒ ▒  ░
+░░▒ ▒ ░ ▒ ░ ░  ░░░▒░ ░ ░ ░ ░▒  ░ ░░▒ ░      ▓██ ░▒░  ░ ░  ░  ░  ▒   
+░ ░ ░ ░ ░   ░    ░░░ ░ ░ ░  ░  ░  ░░        ▒ ▒ ░░     ░   ░        
+  ░ ░       ░  ░   ░           ░            ░ ░        ░  ░ ░      
+░                                           ░ ░                     
+EOF
+    echo -e "${NC}"  
+    echo -e "${GREEN}Version ${SCRIPT_VERSION} - By ZeuspyEC ~ https://github.com/zeuspyEC/${NC}\n"
+}
+
+# Función para verificar y generar locales
+setup_initial_locale() {
+    log "INFO" "Configurando locale inicial"
+    
+    # Verificar si existe el directorio de locales
+    if [[ ! -d "/usr/share/locale" ]]; then
+        mkdir -p /usr/share/locale
+    fi
+    
+    # Asegurarse de que el locale C.UTF-8 esté disponible
+    if ! locale -a | grep -q "C.UTF-8"; then
+        echo "C.UTF-8 UTF-8" > /etc/locale.gen
+        locale-gen
+    fi
 }
 
 # Función para mostrar información del sistema
@@ -178,6 +156,33 @@ print_system_info() {
     ip -br addr | awk '{printf "  %-10s %-15s %s\n", $1, $2, $3}'
     
     echo -e "\n${PURPLE}══════════════════════════════════════${NC}\n"
+}
+
+# Función de inicialización
+init_script() {
+    # Configurar locale inicial
+    setup_initial_locale
+    
+    # Crear archivos de log
+    : > "$LOG_FILE"
+    : > "$ERROR_LOG"  
+    : > "$DEBUG_LOG"
+    
+    # Mostrar banner
+    display_banner
+    
+    # Verificar root
+    if [[ $EUID -ne 0 ]]; then
+        log "ERROR" "Este script debe ejecutarse como root"
+        exit 1
+    fi
+    
+    # Verificar dependencias
+    check_dependencies
+    
+    # Mostrar información inicial
+    log "INFO" "Iniciando ZeuspyEC Arch Linux Installer v${SCRIPT_VERSION}"
+    print_system_info
 }
 
 # Función para formatear tamaños

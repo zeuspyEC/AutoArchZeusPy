@@ -305,18 +305,26 @@ select_language() {
             "${languages[@]}" \
             3>&1 1>&2 2>&3)
         
-        if [[ $? -eq 0 && -n "$language" ]]; then
+        exit_code=$?
+        
+        if [[ $exit_code -eq 0 && -n "$language" ]]; then
             log "INFO" "Idioma seleccionado: $language"
             return 0
+        elif [[ $exit_code -eq 1 ]]; then
+            log "WARN" "No se seleccionó ningún idioma"
+            if ! dialog_wrapper "Reintentar" --title "Advertencia" --yesno "No se seleccionó ningún idioma. ¿Desea volver a intentarlo?" 7 50; then
+                log "ERROR" "El usuario decidió cancelar la instalación"
+                return 1
+            fi
         else
-            log "ERROR" "No se seleccionó un idioma válido"
-            if ! dialog_wrapper "Reintentar" --title "Error" --yesno "¿Desea volver a intentar seleccionar un idioma?" 7 50; then
+            log "ERROR" "Ocurrió un error inesperado en la selección de idioma (código de salida: $exit_code)"
+            if ! dialog_wrapper "Reintentar" --title "Error" --yesno "Ocurrió un error inesperado. ¿Desea volver a intentarlo?" 7 50; then
+                log "ERROR" "El usuario decidió cancelar la instalación"
                 return 1
             fi
         fi
     done
 }
-
 # Función para configurar disposición del teclado
 set_keyboard_layout() {
     log "INFO" "Configurando disposición del teclado"

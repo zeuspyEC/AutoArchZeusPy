@@ -154,38 +154,6 @@ check_system_requirements() {
         log "INFO" "Sistema en modo BIOS"
     fi
     
-    return 0
-}
-    # Verificar memoria
-    local min_ram=1024  # 1GB en MB
-    local total_ram
-    total_ram=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
-    
-    if [[ "$total_ram" -lt "$min_ram" ]]; then
-        log "ERROR" "Memoria RAM insuficiente: $total_ram MB < $min_ram MB"
-        echo -e "${RED}Error: Se requiere al menos 1GB de RAM.${NC}"
-        return 1
-    fi
-    
-    # Verificar arquitectura
-    local arch
-    arch=$(uname -m)
-    
-    if [[ "$arch" != "x86_64" ]]; then
-        log "ERROR" "Arquitectura no soportada: $arch"
-        echo -e "${RED}Error: Solo se soporta arquitectura x86_64.${NC}"
-        return 1
-    fi
-    
-    # Verificar modo de arranque
-    if [[ -d "/sys/firmware/efi/efivars" ]]; then
-        log "INFO" "Sistema en modo UEFI"
-        boot_mode="UEFI"
-    else
-        log "INFO" "Sistema en modo BIOS"
-        boot_mode="BIOS"
-    fi
-    
     # Verificar conexión a Internet
     if ! ping -c 1 -W 5 archlinux.org &>/dev/null; then
         log "ERROR" "No hay conexión a Internet"

@@ -3,14 +3,13 @@
 # ==============================================================================
 # Instalador Mejorado de Arch Linux
 # Versión: 2.0
-# Descripción: Script completo con validaciones exhaustivas y manejo de errores
 # ==============================================================================
 
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
 
-# Variables globales
+# Variables globales y constantes
 declare -g SCRIPT_VERSION="2.0"
 declare -g selected_partition=""
 declare -g language=""

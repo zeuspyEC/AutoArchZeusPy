@@ -2,38 +2,32 @@
 
 # ==============================================================================
 # ZeuspyEC Arch Linux Installer
-# Versión: 3.0
+# Versión: 3.0.1
 # ==============================================================================
 
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
 
-# Sistema de colores y estilos mejorado
-# Declarar el array asociativo antes de usarlo
-declare -A COLORS
+# Definir colores como variables simples
+RESET='\033[0m'
+BOLD='\033[1m'
+DIM='\033[2m'
+ITALIC='\033[3m'
+UNDERLINE='\033[4m'
 
-# Definir los colores
-COLORS=(
-    ["RESET"]='\033[0m'
-    ["BOLD"]='\033[1m'
-    ["DIM"]='\033[2m'
-    ["ITALIC"]='\033[3m'
-    ["UNDERLINE"]='\033[4m'
-    
-    # Colores primarios optimizados para fondo negro
-    ["PRIMARY"]='\033[38;2;72;185;255m'      # Azul brillante
-    ["SUCCESS"]='\033[38;2;0;255;127m'       # Verde brillante
-    ["WARNING"]='\033[38;2;255;185;0m'       # Naranja brillante
-    ["ERROR"]='\033[38;2;255;85;85m'         # Rojo brillante
-    ["INFO"]='\033[38;2;220;220;220m'        # Blanco suave
-    
-    # Colores especiales
-    ["HEADER"]='\033[38;2;147;112;219m'      # Púrpura suave
-    ["INPUT"]='\033[38;2;255;215;0m'         # Dorado
-    ["HINT"]='\033[38;2;169;169;169m'        # Gris medio
-    ["BANNER"]='\033[38;2;0;191;255m'        # Azul cielo brillante
-)
+# Colores primarios optimizados para fondo negro
+PRIMARY='\033[38;2;72;185;255m'      # Azul brillante
+SUCCESS='\033[38;2;0;255;127m'       # Verde brillante
+WARNING='\033[38;2;255;185;0m'       # Naranja brillante
+ERROR='\033[38;2;255;85;85m'         # Rojo brillante
+INFO='\033[38;2;220;220;220m'        # Blanco suave
+
+# Colores especiales
+HEADER='\033[38;2;147;112;219m'      # Púrpura suave
+INPUT='\033[38;2;255;215;0m'         # Dorado
+HINT='\033[38;2;169;169;169m'        # Gris medio
+BANNER='\033[38;2;0;191;255m'        # Azul cielo brillante
 
 # Variables globales
 declare -g SCRIPT_VERSION="3.0"
@@ -64,7 +58,7 @@ declare -g REQUIRED_PACKAGES=(
 
 # Función para mostrar el banner de ZeuspyEC
 display_banner() {
-    echo -e "${COLORS[BANNER]}"
+    echo -e "${BANNER}"
     cat << "EOF"
  ▒███████▒▓█████  █    ██   ██████  ██▓███   ▓██   ██▓▓█████  ▄████▄  
 ▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒  ▒██  ██▒▓█   ▀ ▒██▀ ▀█  
@@ -77,8 +71,8 @@ display_banner() {
   ░ ░       ░  ░   ░           ░            ░ ░        ░  ░ ░      
 ░                                           ░ ░                     
 EOF
-    echo -e "${COLORS[RESET]}"
-    echo -e "${COLORS[INFO]}Version ${SCRIPT_VERSION} - By ZeuspyEC ~ https://github.com/zeuspyEC/${COLORS[RESET]}\n"
+    echo -e "${RESET}"
+    echo -e "${INFO}Version ${SCRIPT_VERSION} - By ZeuspyEC ~ https://github.com/zeuspyEC/${RESET}\n"
 }
 
 # Función mejorada de logging
@@ -98,19 +92,19 @@ log() {
     
     case "$level" in
         "DEBUG")
-            echo -e "${COLORS[DIM]}$log_entry${COLORS[RESET]}" >> "$DEBUG_LOG"
+            echo -e "${DIM}$log_entry${RESET}" >> "$DEBUG_LOG"
             ;;
         "INFO")
-            echo -e "${COLORS[INFO]}ℹ $log_entry${COLORS[RESET]}" | tee -a "$LOG_FILE"
+            echo -e "${INFO}ℹ $log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "SUCCESS")
-            echo -e "${COLORS[SUCCESS]}✔ $log_entry${COLORS[RESET]}" | tee -a "$LOG_FILE"
+            echo -e "${SUCCESS}✔ $log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "WARN")
-            echo -e "${COLORS[WARNING]}⚠ $log_entry${COLORS[RESET]}" | tee -a "$LOG_FILE"
+            echo -e "${WARNING}⚠ $log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "ERROR")
-            echo -e "${COLORS[ERROR]}✘ $log_entry${COLORS[RESET]}" | tee -a "$ERROR_LOG"
+            echo -e "${ERROR}✘ $log_entry${RESET}" | tee -a "$ERROR_LOG"
             print_system_info >> "$ERROR_LOG"
             ;;
     esac

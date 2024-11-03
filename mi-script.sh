@@ -5,9 +5,6 @@
 # Versión: 2.0
 # Descripción: Script completo con validaciones exhaustivas y manejo de errores
 # ==============================================================================
-
-#!/usr/bin/env bash
-
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
@@ -21,22 +18,35 @@ declare -g username=""
 declare -g boot_mode=""
 
 # Configuración del sistema de logging
-readonly LOG_FILE="/tmp/arch_installer.log"
-readonly ERROR_LOG="/tmp/arch_installer_error.log"
-readonly DEBUG_LOG="/tmp/arch_installer_debug.log"
+LOG_FILE="/tmp/arch_installer.log"
+ERROR_LOG="/tmp/arch_installer_error.log"
+DEBUG_LOG="/tmp/arch_installer_debug.log"
 
 # Variables de colores
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly YELLOW='\033[1;33m'
-readonly NC='\033[0m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-# Inicializar archivos de log
+# Crear archivos de log vacíos
 : > "$LOG_FILE"
 : > "$ERROR_LOG"
 : > "$DEBUG_LOG"
+
+# Función para imprimir información del sistema
+print_system_info() {
+    {
+        echo "=== Sistema Info ==="
+        echo "Kernel: $(uname -a)"
+        echo "CPU: $(grep "model name" /proc/cpuinfo | head -n1)"
+        echo "Memoria: $(free -h)"
+        echo "Disco: $(df -h)"
+        echo "Network: $(ip addr)"
+        echo "==================="
+    } 2>/dev/null || true
+}
 
 # Función de logging
 log() {
@@ -71,17 +81,24 @@ log() {
     esac
 }
 
-# Función para imprimir información del sistema
-print_system_info() {
-    {
-        echo "=== Sistema Info ==="
-        echo "Kernel: $(uname -a)"
-        echo "CPU: $(grep "model name" /proc/cpuinfo | head -n1)"
-        echo "Memoria: $(free -h)"
-        echo "Disco: $(df -h)"
-        echo "Network: $(ip addr)"
-        echo "==================="
-    } 2>/dev/null || true
+# Función para ejecutar comandos con logging
+execute_with_log() {
+    local command=("$@")
+    local function_name="${FUNCNAME[1]:-main}"
+    
+    log "DEBUG" "Ejecutando comando: ${command[*]}"
+    
+    if output=$("${command[@]}" 2>&1); then
+        log "INFO" "Comando exitoso: ${command[*]}"
+        log "DEBUG" "Salida: $output"
+        echo "$output"
+        return 0
+    else
+        local exit_code=$?
+        log "ERROR" "Comando falló ($exit_code): ${command[*]}"
+        log "ERROR" "Salida: $output"
+        return $exit_code
+    fi
 }
 
 # Función para verificar requisitos del sistema

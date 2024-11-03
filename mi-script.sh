@@ -6,55 +6,39 @@
 # Descripción: Script completo con validaciones exhaustivas y manejo de errores
 # ==============================================================================
 
+#!/usr/bin/env bash
+
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
 
-# Variables globales con valores por defecto
-declare -g SCRIPT_VERSION="2.0"
-declare -g SCRIPT_PATH
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-declare -g INSTALL_LOG="/var/log/arch_install.log"
-declare -g DEBUG_LOG="/var/log/arch_install_debug.log"
-declare -g ERROR_LOG="/var/log/arch_install_error.log"
+# Variables globales
+declare -g selected_partition=""
+declare -g language=""
+declare -g keyboard_layout=""
+declare -g hostname=""
+declare -g username=""
+declare -g boot_mode=""
 
-# Configuración del sistema
-declare -g MINIMUM_RAM_MB=2048
-declare -g MINIMUM_DISK_GB=20
-declare -g SUPPORTED_ARCHITECTURES=("x86_64")
-declare -g REQUIRED_PACKAGES=(
-    "base"
-    "base-devel"
-    "linux"
-    "linux-firmware"
-    "networkmanager"
-    "grub"
-    "efibootmgr"
-)
+# Configuración del sistema de logging
+readonly LOG_FILE="/tmp/arch_installer.log"
+readonly ERROR_LOG="/tmp/arch_installer_error.log"
+readonly DEBUG_LOG="/tmp/arch_installer_debug.log"
 
-# Variables de instalación
-declare -g TARGET_DISK=""
-declare -g BOOT_MODE=""
-declare -g HOSTNAME=""
-declare -g USERNAME=""
-declare -g TIMEZONE=""
-declare -g LOCALE=""
-declare -g KEYBOARD_LAYOUT=""
+# Variables de colores
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly YELLOW='\033[1;33m'
+readonly NC='\033[0m'
 
-# Colores y estilos
-declare -gr RED='\033[0;31m'
-declare -gr GREEN='\033[0;32m'
-declare -gr YELLOW='\033[1;33m'
-declare -gr BLUE='\033[0;34m'
-declare -gr PURPLE='\033[0;35m'
-declare -gr CYAN='\033[0;36m'
-declare -gr BOLD='\033[1m'
-declare -gr NC='\033[0m'
+# Inicializar archivos de log
+: > "$LOG_FILE"
+: > "$ERROR_LOG"
+: > "$DEBUG_LOG"
 
-# ==============================================================================
-# Funciones de Utilidad
-# ==============================================================================
-
+# Función de logging
 log() {
     local level="$1"
     shift
@@ -67,26 +51,27 @@ log() {
     # Sanitizar mensaje
     message=$(echo "$message" | tr -cd '[:print:]\n')
     
-    # Formato consistente para logs
-    local log_entry="[$timestamp] [$level] [$function_name:$line_number] $message"
+    # Formato de log
+    local log_message="[$timestamp] [$level] [$function_name:$line_number] $message"
     
     case "$level" in
         "DEBUG")
-            echo -e "${CYAN}$log_entry${NC}" >> "$DEBUG_LOG"
+            echo -e "${CYAN}$log_message${NC}" >> "$DEBUG_LOG"
             ;;
         "INFO")
-            echo -e "${GREEN}$log_entry${NC}" | tee -a "$INSTALL_LOG"
+            echo -e "${GREEN}$log_message${NC}" | tee -a "$LOG_FILE"
             ;;
         "WARN")
-            echo -e "${YELLOW}$log_entry${NC}" | tee -a "$INSTALL_LOG"
+            echo -e "${YELLOW}$log_message${NC}" | tee -a "$LOG_FILE"
             ;;
         "ERROR")
-            echo -e "${RED}$log_entry${NC}" | tee -a "$ERROR_LOG"
+            echo -e "${RED}$log_message${NC}" | tee -a "$ERROR_LOG"
             print_system_info >> "$ERROR_LOG"
             ;;
     esac
 }
 
+# Función para imprimir información del sistema
 print_system_info() {
     {
         echo "=== Sistema Info ==="
@@ -99,25 +84,50 @@ print_system_info() {
     } 2>/dev/null || true
 }
 
-# ==============================================================================
-# Funciones de Verificación de Sistema
-# ==============================================================================
-
-# Función para verificar requisitos del sistema con mejor manejo de errores
+# Función para verificar requisitos del sistema
 check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"
     
-    # Verificar espacio en disco mínimo (20GB en bytes)
+    # Verificar espacio en disco
     local min_space=$((20 * 1024 * 1024 * 1024))
     local available_space
     available_space=$(df -B1 --output=avail / | tail -n1)
     
     if [[ "$available_space" -lt "$min_space" ]]; then
         log "ERROR" "Espacio insuficiente: $(numfmt --to=iec-i --suffix=B "$available_space") < 20GB"
-        echo -e "${RED}Error: Se requieren al menos 20GB de espacio libre.${NC}"
         return 1
     fi
     
+    # Verificar memoria
+    local min_ram=1024
+    local total_ram
+    total_ram=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+    
+    if [[ "$total_ram" -lt "$min_ram" ]]; then
+        log "ERROR" "RAM insuficiente: ${total_ram}MB < ${min_ram}MB"
+        return 1
+    fi
+    
+    # Verificar arquitectura
+    local arch
+    arch=$(uname -m)
+    
+    if [[ "$arch" != "x86_64" ]]; then
+        log "ERROR" "Arquitectura no soportada: $arch"
+        return 1
+    fi
+    
+    # Verificar modo de arranque
+    if [[ -d "/sys/firmware/efi/efivars" ]]; then
+        boot_mode="UEFI"
+        log "INFO" "Sistema en modo UEFI"
+    else
+        boot_mode="BIOS"
+        log "INFO" "Sistema en modo BIOS"
+    fi
+    
+    return 0
+}
     # Verificar memoria
     local min_ram=1024  # 1GB en MB
     local total_ram

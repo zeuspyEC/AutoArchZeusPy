@@ -117,22 +117,27 @@ check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"
     
     # Listar todos los discos disponibles
-    local available_disks
-    available_disks=($(lsblk -dpno NAME,SIZE,TYPE | grep disk))
+    local disk_list
+    disk_list=$(lsblk -dpno NAME,SIZE,TYPE | grep disk)
     
     # Verificar si hay discos disponibles
-    if [[ ${#available_disks[@]} -eq 0 ]]; then
+    if [[ -z "$disk_list" ]]; then
         log "ERROR" "No se encontraron discos disponibles"
         return 1
-    fi  # <-- Aquí estaba el error, era } en lugar de fi
+    fi
+    
+    # Convertir la salida en un array
+    readarray -t available_disks <<< "$disk_list"
     
     # Verificar espacio en los discos disponibles
     local found_suitable_disk=false
-    local min_space=$((15 * 1024 * 1024 * 1024)) # Reducido a 15GB para VMs
+    local min_space=$((15 * 1024 * 1024 * 1024)) # 15GB para VMs
     
     for disk in "${available_disks[@]}"; do
-        local disk_name=$(echo "$disk" | cut -d' ' -f1)
-        local disk_size=$(blockdev --getsize64 "$disk_name")
+        local disk_name
+        disk_name=$(echo "$disk" | awk '{print $1}')
+        local disk_size
+        disk_size=$(blockdev --getsize64 "$disk_name" 2>/dev/null || echo 0)
         
         if [[ "$disk_size" -ge "$min_space" ]]; then
             found_suitable_disk=true
@@ -147,7 +152,7 @@ check_system_requirements() {
     fi
     
     # Verificar memoria
-    local min_ram=512  # Reducido a 512MB para VMs
+    local min_ram=512  # 512MB para VMs
     local total_ram
     total_ram=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
     
@@ -176,7 +181,6 @@ check_system_requirements() {
     
     return 0
 }
-
 check_network_connectivity() {
     log "INFO" "Verificando conectividad de red"
     

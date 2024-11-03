@@ -296,25 +296,24 @@ select_language() {
         "de_DE.UTF-8" "Alemán (Alemania)"
     )
     
-    language=$(dialog_wrapper "Idioma" \
-        --title "Selección de idioma" \
-        --menu "Seleccione el idioma para la instalación:" \
-        10 50 4 \
-        "${languages[@]}" \
-        3>&1 1>&2 2>&3) 
-    
-    if [[ $? -ne 0 ]]; then
-        log "ERROR" "No se seleccionó un idioma válido"
-        return 1
-    fi
-    
-    if [[ -z "$language" ]]; then
-        log "ERROR" "No se proporcionó un idioma"
-        return 1
-    fi
-    
-    log "INFO" "Idioma seleccionado: $language"
-    return 0
+    while true; do
+        language=$(dialog_wrapper "Idioma" \
+            --title "Selección de idioma" \
+            --menu "Seleccione el idioma para la instalación:" \
+            10 50 4 \
+            "${languages[@]}" \
+            3>&1 1>&2 2>&3)
+        
+        if [[ $? -eq 0 && -n "$language" ]]; then
+            log "INFO" "Idioma seleccionado: $language"
+            return 0
+        else
+            log "ERROR" "No se seleccionó un idioma válido"
+            if ! dialog_wrapper "Reintentar" --title "Error" --yesno "¿Desea volver a intentar seleccionar un idioma?" 7 50; then
+                return 1
+            fi
+        fi
+    done
 }
 
 # Función para configurar disposición del teclado
@@ -531,6 +530,24 @@ mount_partitions() {
         
         if ! execute_with_log mount "${selected_partition}1" /mnt/boot; then
             log "ERROR" "Fallo al montar partición boot"
+            return 1
+        fi
+    fi
+    
+    # Verificar puntos de montaje
+    if ! mountpoint -q /mnt; then
+        log "ERROR" "La partición root no está montada correctamente"
+        return 1
+    fi
+    
+    if [[ "$boot_mode" == "UEFI" ]]; then
+        if ! mountpoint -q /mnt/efi; then
+            log "ERROR" "La partición ESP no está montada correctamente"
+            return 1
+        fi
+    else
+        if ! mountpoint -q /mnt/boot; then
+            log "ERROR" "La partición boot no está montada correctamente"
             return 1
         fi
     fi

@@ -84,9 +84,6 @@ log() {
     local function_name="${FUNCNAME[1]:-main}"
     local line_number="${BASH_LINENO[0]}"
     
-    # Sanitizar mensaje
-    message=$(echo "$message" | tr -cd '[:print:]\n')
-    
     # Formato de log mejorado
     local log_entry="[$timestamp] [$level] [$function_name:$line_number] $message"
     
@@ -95,31 +92,30 @@ log() {
             echo -e "${DIM}$log_entry${RESET}" >> "$DEBUG_LOG"
             ;;
         "INFO")
-            echo -e "${INFO}ℹ $log_entry${RESET}" | tee -a "$LOG_FILE"
+            echo -e "${INFO}$log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "SUCCESS")
-            echo -e "${SUCCESS}✔ $log_entry${RESET}" | tee -a "$LOG_FILE"
+            echo -e "${SUCCESS}$log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "WARN")
-            echo -e "${WARNING}⚠ $log_entry${RESET}" | tee -a "$LOG_FILE"
+            echo -e "${WARNING}$log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "ERROR")
-            echo -e "${ERROR}✘ $log_entry${RESET}" | tee -a "$ERROR_LOG"
-            print_system_info >> "$ERROR_LOG"
+            echo -e "${ERROR}$log_entry${RESET}" | tee -a "$ERROR_LOG"
             ;;
     esac
 }
 
 # Función para mostrar información del sistema
 print_system_info() {
+    echo -e "${HEADER}=== Información del Sistema ===${RESET}"
     {
-        echo "=== Información del Sistema ==="
-        echo "Kernel: $(uname -r)"
-        echo "CPU: $(grep "model name" /proc/cpuinfo | head -n1)"
-        echo "Memoria: $(free -h)"
-        echo "Disco: $(df -h)"
-        echo "Red: $(ip addr)"
-        echo "==========================="
+        echo -e "${INFO}Kernel:${RESET} $(uname -r)"
+        echo -e "${INFO}CPU:${RESET} $(grep "model name" /proc/cpuinfo | head -n1)"
+        echo -e "${INFO}Memoria:${RESET} $(free -h)"
+        echo -e "${INFO}Disco:${RESET} $(df -h)"
+        echo -e "${INFO}Red:${RESET} $(ip addr)"
+        echo -e "${HEADER}===========================${RESET}"
     } 2>/dev/null || true
 }
 

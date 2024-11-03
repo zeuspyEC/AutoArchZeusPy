@@ -103,41 +103,59 @@ print_system_info() {
 # Funciones de Verificación de Sistema
 # ==============================================================================
 
+# Función para verificar requisitos del sistema con mejor manejo de errores
 check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"
     
+    # Verificar espacio en disco mínimo (20GB en bytes)
+    local min_space=$((20 * 1024 * 1024 * 1024))
+    local available_space
+    available_space=$(df -B1 --output=avail / | tail -n1)
+    
+    if [[ "$available_space" -lt "$min_space" ]]; then
+        log "ERROR" "Espacio insuficiente: $(numfmt --to=iec-i --suffix=B "$available_space") < 20GB"
+        echo -e "${RED}Error: Se requieren al menos 20GB de espacio libre.${NC}"
+        return 1
+    fi
+    
+    # Verificar memoria
+    local min_ram=1024  # 1GB en MB
+    local total_ram
+    total_ram=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+    
+    if [[ "$total_ram" -lt "$min_ram" ]]; then
+        log "ERROR" "Memoria RAM insuficiente: $total_ram MB < $min_ram MB"
+        echo -e "${RED}Error: Se requiere al menos 1GB de RAM.${NC}"
+        return 1
+    fi
+    
     # Verificar arquitectura
     local arch
-    arch="$(uname -m)"
-    if [[ ! " ${SUPPORTED_ARCHITECTURES[@]} " =~ " ${arch} " ]]; then
+    arch=$(uname -m)
+    
+    if [[ "$arch" != "x86_64" ]]; then
         log "ERROR" "Arquitectura no soportada: $arch"
+        echo -e "${RED}Error: Solo se soporta arquitectura x86_64.${NC}"
         return 1
-    }
-    
-    # Verificar RAM
-    local total_ram
-    total_ram=$(awk '/MemTotal/ {print $2/1024}' /proc/meminfo)
-    if (( $(echo "$total_ram < $MINIMUM_RAM_MB" | bc -l) )); then
-        log "ERROR" "RAM insuficiente: ${total_ram}MB (mínimo ${MINIMUM_RAM_MB}MB)"
-        return 1
-    }
-    
-    # Verificar espacio en disco
-    local total_space
-    total_space=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
-    if (( total_space < MINIMUM_DISK_GB )); then
-        log "ERROR" "Espacio insuficiente: ${total_space}GB (mínimo ${MINIMUM_DISK_GB}GB)"
-        return 1
-    }
+    fi
     
     # Verificar modo de arranque
     if [[ -d "/sys/firmware/efi/efivars" ]]; then
-        BOOT_MODE="UEFI"
+        log "INFO" "Sistema en modo UEFI"
+        boot_mode="UEFI"
     else
-        BOOT_MODE="BIOS"
+        log "INFO" "Sistema en modo BIOS"
+        boot_mode="BIOS"
     fi
-    log "INFO" "Modo de arranque detectado: $BOOT_MODE"
     
+    # Verificar conexión a Internet
+    if ! ping -c 1 -W 5 archlinux.org &>/dev/null; then
+        log "ERROR" "No hay conexión a Internet"
+        echo -e "${RED}Error: Se requiere conexión a Internet.${NC}"
+        return 1
+    fi
+    
+    log "INFO" "Requisitos del sistema verificados correctamente"
     return 0
 }
 

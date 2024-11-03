@@ -246,15 +246,16 @@ check_dependencies() {
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         log "INFO" "Instalando dependencias faltantes: ${missing_deps[*]}"  
         if ! execute_with_log pacman -Sy --noconfirm "${missing_deps[@]}"; then
-            log "ERROR" "Fallo al instalar dependencias"
-            dialog_wrapper "Error" --title "Error" --msgbox "No se pudieron instalar las dependencias necesarias.\nVerifique su conexión a Internet." 7 50
-            return 1  
+            log "WARN" "Fallo al instalar algunas dependencias"
+            if ! dialog_wrapper "Continuar" --title "Advertencia" --yesno "Fallo al instalar algunas dependencias. ¿Desea continuar de todos modos?" 7 50; then
+                log "ERROR" "El usuario decidió cancelar la instalación"
+                return 1
+            fi
         fi
     fi
     
     return 0
 }
-
 # Función para verificar conexión a Internet
 check_internet_connection() {
     log "INFO" "Verificando conexión a Internet"
@@ -406,51 +407,63 @@ partition_disk() {
     local device="$1"
     log "INFO" "Iniciando particionamiento de disco: $device"
     
-    if ! dialog_wrapper "Advertencia" --title "Advertencia" \
-            --yesno "¡ADVERTENCIA!\n\nSe borrarán todos los datos en $device.\n¿Está seguro de continuar?" 10 50; then
-        log "INFO" "Usuario canceló el particionamiento"
-        return 1
-    fi
-    
-    # Calcular tamaños
-    local total_size
-    local boot_size=512  # MB
-    local swap_size
-    local root_size
-    
-    total_size=$(blockdev --getsize64 "$device" | awk '{print int($1/1024/1024)}')  # En MB
-    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-    root_size=$((total_size - boot_size - swap_size))
-    
-    if [[ "$boot_mode" == "UEFI" ]]; then
-        log "INFO" "Creando tabla de particiones GPT para UEFI"
+    if dialog_wrapper "Particionamiento" --title "Particionamiento de disco" --yesno "¿Desea particionar automáticamente el disco $device?" 7 60; then
+        log "INFO" "Particionamiento automático seleccionado"
         
-        # Crear particiones para UEFI
-        local commands=(
-            "parted -s $device mklabel gpt"
-            "parted -s $device mkpart ESP fat32 1MiB ${boot_size}MiB"
-            "parted -s $device set 1 esp on"
-            "parted -s $device mkpart primary ext4 ${boot_size}MiB $((boot_size + root_size))MiB"
-            "parted -s $device mkpart primary linux-swap $((boot_size + root_size))MiB 100%"
-        )
+        # Calcular tamaños
+        local total_size
+        local boot_size=512  # MB
+        local swap_size
+        local root_size
+        
+        total_size=$(blockdev --getsize64 "$device" | awk '{print int($1/1024/1024)}')  # En MB
+        swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+        root_size=$((total_size - boot_size - swap_size))
+        
+        if [[ "$boot_mode" == "UEFI" ]]; then
+            log "INFO" "Creando tabla de particiones GPT para UEFI"
+            
+            # Crear particiones para UEFI
+            local commands=(
+                "parted -s $device mklabel gpt"
+                "parted -s $device mkpart ESP fat32 1MiB ${boot_size}MiB"
+                "parted -s $device set 1 esp on"
+                "parted -s $device mkpart primary ext4 ${boot_size}MiB $((boot_size + root_size))MiB"
+                "parted -s $device mkpart primary linux-swap $((boot_size + root_size))MiB 100%"
+            )
+        else
+            log "INFO" "Creando tabla de particiones MBR para BIOS"
+            
+            # Crear particiones para BIOS
+            local commands=(
+                "parted -s $device mklabel msdos"
+                "parted -s $device mkpart primary ext4 1MiB $((boot_size + root_size))MiB"
+                "parted -s $device set 1 boot on"
+                "parted -s $device mkpart primary linux-swap $((boot_size + root_size))MiB 100%"
+            )
+        fi
+        
+        for cmd in "${commands[@]}"; do
+            if ! execute_with_log $cmd; then
+                log "ERROR" "Fallo al ejecutar: $cmd"
+                return 1
+            fi
+        done
     else
-        log "INFO" "Creando tabla de particiones MBR para BIOS"
+        log "INFO" "Particionamiento manual seleccionado"
         
-        # Crear particiones para BIOS
-        local commands=(
-            "parted -s $device mklabel msdos"
-            "parted -s $device mkpart primary ext4 1MiB $((boot_size + root_size))MiB"
-            "parted -s $device set 1 boot on"
-            "parted -s $device mkpart primary linux-swap $((boot_size + root_size))MiB 100%"
-        )
-    fi
-    
-    for cmd in "${commands[@]}"; do
-        if ! execute_with_log $cmd; then
-            log "ERROR" "Fallo al ejecutar: $cmd"
+        if ! dialog_wrapper "Advertencia" --title "Advertencia" \
+                --yesno "¡ADVERTENCIA!\n\nSe borrarán todos los datos en $device.\n¿Está seguro de continuar?" 10 50; then
+            log "INFO" "Usuario canceló el particionamiento"
             return 1
         fi
-    done
+        
+        # Obtener particiones manualmente usando cfdisk
+        if ! execute_with_log cfdisk "$device"; then
+            log "ERROR" "Fallo al particionar manualmente el disco"
+            return 1
+        fi
+    fi
     
     # Formatear particiones
     if [[ "$boot_mode" == "UEFI" ]]; then
@@ -493,7 +506,6 @@ partition_disk() {
     log "INFO" "Particionamiento completado exitosamente"
     return 0
 }
-
 # Función para montar particiones  
 mount_partitions() {
     log "INFO" "Montando particiones"

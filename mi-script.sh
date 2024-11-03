@@ -207,7 +207,7 @@ check_dependencies() {
     for dep in "${deps[@]}"; do
         echo -ne "${CYAN}Verificando $dep... ${NC}"
         if command -v "$dep" >/dev/null 2>&1; then
-            echo -e "${SUCCESS}✔${NC}"
+            echo -e "${GREEN}✔${NC}"
         else
             echo -e "${ERROR}✘${NC}"
             missing_deps+=("$dep")
@@ -235,16 +235,16 @@ check_system_requirements() {
         log "ERROR" "Arquitectura no soportada: $arch"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     # Verificar modo de arranque
     echo -ne "${CYAN}Verificando modo de arranque... ${NC}"
     if [[ -d "/sys/firmware/efi/efivars" ]]; then
         BOOT_MODE="UEFI"
-        echo -e "${SUCCESS}UEFI${NC}"
+        echo -e "${GREEN}UEFI${NC}"
     else
         BOOT_MODE="BIOS"
-        echo -e "${SUCCESS}BIOS${NC}"
+        echo -e "${GREEN}BIOS${NC}"
     fi
     
     # Verificar memoria
@@ -258,7 +258,7 @@ check_system_requirements() {
         log "ERROR" "RAM insuficiente: ${total_ram}MB < ${min_ram}MB"
         return 1
     fi
-    echo -e "${SUCCESS}✔ ${total_ram}MB${NC}"
+    echo -e "${GREEN}✔ ${total_ram}MB${NC}"
     
     # Verificar espacio en disco
     verify_disk_space
@@ -290,7 +290,7 @@ verify_disk_space() {
         local disk_model=$(echo "$disk_info" | awk '{$1=$2=$3=""; print $0}' | xargs)
         
         if ((disk_size >= min_space)); then
-            echo -e "${SUCCESS}$disk_count. $disk_name - $(numfmt --to=iec-i --suffix=B "$disk_size") - $disk_model${NC}"
+            echo -e "${GREEN}$disk_count. $disk_name - $(numfmt --to=iec-i --suffix=B "$disk_size") - $disk_model${NC}"
             valid_disks+=("$disk_name")
         else
             echo -e "${ERROR}$disk_count. $disk_name - $(numfmt --to=iec-i --suffix=B "$disk_size") - $disk_model (Espacio insuficiente)${NC}"
@@ -316,7 +316,7 @@ check_network_connectivity() {
     for host in "${test_hosts[@]}"; do
         echo -ne "${INFO]}Probando conexión a $host... ${NC}"
         if ping -c 1 -W 5 "$host" &>/dev/null; then
-            echo -e "${SUCCESS}✔${NC}"
+            echo -e "${GREEN}✔${NC}"
             connected=true
             break
         else
@@ -430,7 +430,7 @@ setup_ethernet_connection() {
         if dhcpcd "$interface"; then
             sleep 3
             if ping -c 1 archlinux.org &>/dev/null; then
-                echo -e "${SUCCESS}✔${NC}"
+                echo -e "${GREEN}✔${NC}"
                 log "SUCCESS" "Conexión ethernet establecida"
                 return 0
             fi
@@ -586,7 +586,7 @@ create_uefi_partitions() {
         return 1
     fi
     show_progress 3 3
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     # Esperar a que el kernel detecte las nuevas particiones
     sleep 2
@@ -605,7 +605,7 @@ create_uefi_partitions() {
         log "ERROR" "Fallo al formatear partición EFI"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     echo -ne "${CYAN}Formateando partición ROOT... ${NC}"
     if ! mkfs.ext4 -F "$root_part"; then
@@ -613,7 +613,7 @@ create_uefi_partitions() {
         log "ERROR" "Fallo al formatear partición ROOT"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     echo -ne "${CYAN}Formateando partición SWAP... ${NC}"
     if ! mkswap "$swap_part"; then
@@ -626,7 +626,7 @@ create_uefi_partitions() {
         log "ERROR" "Fallo al activar SWAP"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     # Montar particiones
     echo -e "\n${PURPLE}Montando particiones:${NC}"
@@ -637,7 +637,7 @@ create_uefi_partitions() {
         log "ERROR" "Fallo al montar partición ROOT"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     echo -ne "${CYAN}Creando y montando directorio EFI... ${NC}"
     if ! mkdir -p /mnt/boot/efi; then
@@ -650,7 +650,7 @@ create_uefi_partitions() {
         log "ERROR" "Fallo al montar partición EFI"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     log "SUCCESS" "Particionamiento UEFI completado exitosamente"
     return 0
@@ -709,7 +709,7 @@ create_bios_partitions() {
         return 1
     fi
     show_progress 3 3
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     # Esperar a que el kernel detecte las nuevas particiones
     sleep 2
@@ -728,7 +728,7 @@ create_bios_partitions() {
         log "ERROR" "Fallo al formatear partición BOOT"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     echo -ne "${CYAN}Formateando partición ROOT... ${NC}"
     if ! mkfs.ext4 -F "$root_part"; then
@@ -736,7 +736,7 @@ create_bios_partitions() {
         log "ERROR" "Fallo al formatear partición ROOT"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     echo -ne "${CYAN}Formateando partición SWAP... ${NC}"
     if ! mkswap "$swap_part"; then
@@ -749,7 +749,7 @@ create_bios_partitions() {
         log "ERROR" "Fallo al activar SWAP"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     # Montar particiones
     echo -e "\n${PURPLE}Montando particiones:${NC}"
@@ -760,7 +760,7 @@ create_bios_partitions() {
         log "ERROR" "Fallo al montar partición ROOT"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     echo -ne "${CYAN}Creando y montando directorio BOOT... ${NC}"
     if ! mkdir -p /mnt/boot; then
@@ -773,7 +773,7 @@ create_bios_partitions() {
         log "ERROR" "Fallo al montar partición BOOT"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     log "SUCCESS" "Particionamiento BIOS completado exitosamente"
     return 0
@@ -832,7 +832,7 @@ install_base_system() {
         ((current++))
         echo -ne "${CYAN}Instalando $package... ${NC}"
         if pacstrap /mnt "$package" &>/dev/null; then
-            echo -e "${SUCCESS}✔${NC}"
+            echo -e "${GREEN}✔${NC}"
         else
             echo -e "${ERROR}✘${NC}"
             log "ERROR" "Fallo al instalar $package"
@@ -849,7 +849,7 @@ install_base_system() {
         log "ERROR" "Fallo al generar fstab"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     # Verificar fstab
     if ! grep -q "UUID" /mnt/etc/fstab; then
@@ -870,7 +870,7 @@ update_mirrors() {
         log "ERROR" "Fallo al respaldar mirrorlist"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     if command -v reflector &>/dev/null; then
         echo -ne "${CYAN}Optimizando mirrors con reflector... ${NC}"
@@ -878,7 +878,7 @@ update_mirrors() {
                     --protocol https \
                     --sort rate \
                     --save /etc/pacman.d/mirrorlist &>/dev/null; then
-            echo -e "${SUCCESS}✔${NC}"
+            echo -e "${GREEN}✔${NC}"
         else
             echo -e "${ERROR}✘${NC}"
             log "WARN" "Fallo al optimizar mirrors, usando lista por defecto"
@@ -970,7 +970,7 @@ configure_timezone() {
         echo -e "${ERROR}✘${NC}"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     return 0
 }
@@ -992,7 +992,7 @@ configure_locale() {
     echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
     echo "KEYMAP=es" > /mnt/etc/vconsole.conf
     
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     return 0
 }
 
@@ -1043,7 +1043,7 @@ configure_network() {
         echo -e "${ERROR}✘${NC}"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     return 0
 }
 
@@ -1065,7 +1065,7 @@ configure_bootloader() {
             return 1
         fi
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     # Configurar GRUB
     sed -i 's/#GRUB_DISABLE_OS_PROBER=false/GRUB_DISABLE_OS_PROBER=false/' /mnt/etc/default/grub
@@ -1075,7 +1075,7 @@ configure_bootloader() {
         echo -e "${ERROR}✘${NC}"
         return 1
     fi
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     
     return 0
 }
@@ -1099,7 +1099,7 @@ cleanup() {
     # Desactivar swap
     swapoff -a
     
-    echo -e "${SUCCESS}✔${NC}"
+    echo -e "${GREEN}✔${NC}"
     log "SUCCESS" "Limpieza completada"
 }
 
@@ -1145,7 +1145,7 @@ main() {
     
     # Mostrar resumen de instalación
     echo -e "\n${PURPLE}Resumen de la Instalación${NC}"
-    echo -e "${SUCCESS}✔ Instalación completada exitosamente${NC}"
+    echo -e "${GREEN}✔ Instalación completada exitosamente${NC}"
     echo -e "${CYAN}• Tiempo total: ${minutes}m ${seconds}s${NC}"
     echo -e "${CYAN}• Hostname: $HOSTNAME${NC}"
     echo -e "${CYAN}• Usuario: $USERNAME${NC}"

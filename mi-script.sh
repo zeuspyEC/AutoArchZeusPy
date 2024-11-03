@@ -1,12 +1,32 @@
 #!/usr/bin/env bash
-
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
-
 # ==============================================================================
 # ZeuspyEC Arch Linux Installer
 # Versión: 3.0.1
 # ==============================================================================
+
+# Modificar la sección inicial del script para manejar mejor los locales
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
+# Función para verificar y generar locales necesarios
+setup_initial_locale() {
+    log "INFO" "Configurando locale inicial"
+    
+    # Verificar si existe el directorio de locales
+    if [[ ! -d "/usr/share/locale" ]]; then
+        mkdir -p /usr/share/locale
+    }
+    
+    # Asegurarse de que el locale C.UTF-8 esté disponible
+    if ! locale -a | grep -q "C.UTF-8"; then
+        echo "C.UTF-8 UTF-8" > /etc/locale.gen
+        locale-gen
+    fi
+    
+    # Configurar locale temporal para la instalación
+    export LANG=C.UTF-8
+    export LC_ALL=C.UTF-8
+}
 
 # Habilitar modo estricto
 set -euo pipefail
@@ -208,6 +228,9 @@ show_progress() {
 
 # Inicialización del script
 init_script() {
+    # Configurar locale inicial
+    setup_initial_locale
+    
     # Crear archivos de log
     : > "$LOG_FILE"
     : > "$ERROR_LOG"  
@@ -244,6 +267,7 @@ check_dependencies() {
         "arch-chroot"
         "iwctl"
         "ping"
+        "locale-gen"  # Añadir locale-gen a las dependencias
     )
     
     local missing_deps=()
@@ -260,13 +284,19 @@ check_dependencies() {
             echo -e "${ERROR}• $dep${NC}"
         done
         echo ""
+        
+        # Intentar instalar dependencias faltantes
+        if command -v pacman >/dev/null 2>&1; then
+            echo -e "${YELLOW}Intentando instalar dependencias faltantes...${NC}"
+            pacman -Sy --noconfirm glibc
+        fi
+        
         return 1
     fi
     
     log "SUCCESS" "Todas las dependencias están instaladas"
     return 0
 }
-
 check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"
     
@@ -1002,24 +1032,32 @@ return 0
 }
 
 configure_locale() {
-echo -ne "${CYAN}Configurando locales... ${NC}"
+    echo -ne "${CYAN}Configurando locales... ${NC}"
 
-# Habilitar locales necesarios
-sed -i 's/#\(en_US.UTF-8\)/\1/' /mnt/etc/locale.gen
-sed -i 's/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
-
-# Generar locales
-if ! arch-chroot /mnt locale-gen; then
-    echo -e "${ERROR}✘${NC}"
-    return 1
-fi
-
-# Configurar idioma predeterminado
-echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
-echo "KEYMAP=es" > /mnt/etc/vconsole.conf
-
-echo -e "${GREEN}✔${NC}"
-return 0
+    # Respaldar locale.gen existente
+    cp /mnt/etc/locale.gen /mnt/etc/locale.gen.backup
+    
+    # Asegurarse de que el directorio existe
+    mkdir -p /mnt/usr/share/locale
+    
+    # Habilitar locales necesarios
+    echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
+    echo "es_ES.UTF-8 UTF-8" >> /mnt/etc/locale.gen
+    
+    # Generar locales dentro del chroot
+    if ! arch-chroot /mnt locale-gen; then
+        echo -e "${ERROR}✘${NC}"
+        log "ERROR" "Fallo al generar locales"
+        return 1
+    fi
+    
+    # Configurar idioma predeterminado
+    echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
+    echo "LC_ALL=en_US.UTF-8" >> /mnt/etc/locale.conf
+    echo "KEYMAP=es" > /mnt/etc/vconsole.conf
+    
+    echo -e "${GREEN}✔${NC}"
+    return 0
 }
 
 configure_users() {

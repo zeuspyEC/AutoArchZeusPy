@@ -264,27 +264,104 @@ check_dependencies() {
     )
     
     local missing_deps=()
+    local install_attempts=0
+    local max_attempts=3
     
-    for dep in "${deps[@]}"; do
-        echo -ne "${CYAN}Verificando $dep... ${RESET}"
-        if ! command -v "$dep" >/dev/null 2>&1; then
-            echo -e "${RED}✘${RESET}"
-            missing_deps+=("$dep")
-        else
-            echo -e "${GREEN}✔${RESET}"
+    while ((install_attempts < max_attempts)); do
+        missing_deps=()
+        
+        # Verificar cada dependencia
+        for dep in "${deps[@]}"; do
+            echo -ne "${CYAN}Verificando $dep... ${RESET}"
+            if ! command -v "$dep" >/dev/null 2>&1; then
+                echo -e "${YELLOW}➜ Faltante${RESET}"
+                missing_deps+=("$dep")
+            else
+                echo -e "${GREEN}✔${RESET}"
+            fi
+        done
+        
+        # Si no hay dependencias faltantes, salir del bucle
+        if ((${#missing_deps[@]} == 0)); then
+            log "SUCCESS" "Todas las dependencias están instaladas"
+            return 0
+        fi
+        
+        # Intentar instalar dependencias faltantes
+        echo -e "\n${YELLOW}Instalando dependencias faltantes...${RESET}"
+        
+        # Mapeo de comandos a paquetes
+        declare -A pkg_map=(
+            ["mkfs.fat"]="dosfstools"
+            ["mkfs.ext4"]="e2fsprogs"
+            ["arch-chroot"]="arch-install-scripts"
+            ["iwctl"]="iwd"
+        )
+        
+        # Actualizar base de datos de pacman
+        pacman -Sy --noconfirm
+        
+        for dep in "${missing_deps[@]}"; do
+            local pkg="${pkg_map[$dep]:-$dep}"
+            echo -ne "${CYAN}Instalando $pkg... ${RESET}"
+            if pacman -S --noconfirm "$pkg"; then
+                echo -e "${GREEN}✔${RESET}"
+            else
+                echo -e "${RED}✘${RESET}"
+            fi
+        done
+        
+        ((install_attempts++))
+        
+        if ((install_attempts < max_attempts)); then
+            echo -e "\n${YELLOW}Reintentando verificación de dependencias...${RESET}"
+            sleep 2
         fi
     done
     
+    # Si llegamos aquí, no se pudieron instalar todas las dependencias
     if ((${#missing_deps[@]} > 0)); then
-        echo -e "\n${ERROR}Dependencias faltantes:${RESET}"
-        for dep in "${missing_deps[@]}"; do
-            echo -e "${RED}• $dep${RESET}"
-        done
-        return 1
+        echo -e "\n${RED}No se pudieron instalar las siguientes dependencias:${RESET}"
+        printf '%s\n' "${missing_deps[@]}" | sed 's/^/  • /'
+        
+        echo -e "\n${YELLOW}¿Desea continuar de todos modos? (s/N):${RESET} "
+        read -r response
+        if [[ "$response" =~ ^[Ss]$ ]]; then
+            log "WARN" "Continuando sin todas las dependencias"
+            return 0
+        else
+            log "ERROR" "Instalación cancelada por dependencias faltantes"
+            return 1
+        fi
     fi
     
-    log "SUCCESS" "Todas las dependencias están instaladas"
     return 0
+}
+
+install_package() {
+    local package="$1"
+    local max_attempts=3
+    local attempt=0
+    
+    while ((attempt < max_attempts)); do
+        echo -ne "${CYAN}Instalando $package... ${RESET}"
+        if pacman -S --noconfirm "$package" &>/dev/null; then
+            echo -e "${GREEN}✔${RESET}"
+            return 0
+        else
+            echo -e "${RED}✘${RESET}"
+            ((attempt++))
+            
+            if ((attempt < max_attempts)); then
+                echo -e "${YELLOW}Reintentando ($attempt/$max_attempts)...${RESET}"
+                sleep 2
+            fi
+        fi
+    done
+    
+    echo -e "${YELLOW}¿Desea continuar sin $package? (s/N):${RESET} "
+    read -r response
+    [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
 }
 
 check_system_requirements() {
@@ -1827,6 +1904,67 @@ main() {
     show_post_install_message
     
     return 0
+}
+
+set +e  # No terminar en errores
+trap 'error_handler $? $LINENO $BASH_LINENO "$BASH_COMMAND" $(printf "::%s" ${FUNCNAME[@]:-})' ERR
+
+error_handler() {
+    local exit_code=$1
+    local line_no=$2
+    local bash_lineno=$3
+    local last_command=$4
+    local func_trace=$5
+    
+    echo -e "\n${RED}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${RED}║            Error Detectado             ║${RESET}"
+    echo -e "${RED}╚════════════════════════════════════════╝${RESET}\n"
+    
+    echo -e "${WHITE}Código de error:${RESET} $exit_code"
+    echo -e "${WHITE}Línea:${RESET} $line_no"
+    echo -e "${WHITE}Comando:${RESET} $last_command"
+    echo -e "${WHITE}Traza de función:${RESET} ${func_trace#::}"
+    
+    echo -e "\n${YELLOW}¿Desea intentar continuar? (s/N):${RESET} "
+    read -r response
+    
+    if [[ "$response" =~ ^[Ss]$ ]]; then
+        log "WARN" "Continuando después del error..."
+        return 0
+    else
+        log "ERROR" "Instalación cancelada por el usuario"
+        cleanup
+        exit 1
+    fi
+}
+
+# Función para reintentar comandos
+retry_command() {
+    local max_attempts=3
+    local delay=2
+    local attempt=1
+    local command=("$@")
+    
+    while ((attempt <= max_attempts)); do
+        if "${command[@]}"; then
+            return 0
+        else
+            if ((attempt == max_attempts)); then
+                echo -e "\n${YELLOW}¿Desea reintentar '$*'? (s/N):${RESET} "
+                read -r response
+                if [[ "$response" =~ ^[Ss]$ ]]; then
+                    max_attempts=$((max_attempts + 1))
+                else
+                    return 1
+                fi
+            fi
+            echo -e "${YELLOW}Intento $attempt de $max_attempts falló. Reintentando en $delay segundos...${RESET}"
+            sleep $delay
+            ((attempt++))
+        fi
+    done
+    
+    return 1
 }
 
 # Verificar si se ejecuta como root

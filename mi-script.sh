@@ -661,6 +661,45 @@ setup_ethernet_connection() {
 # ==============================================================================
 # Funciones de Particionamiento y Formateo
 # ==============================================================================
+repair_mount_points() {
+    local root_part="$1"
+    local boot_part="$2"
+    
+    log "INFO" "Intentando reparar puntos de montaje"
+    
+    # Desmontar todo primero
+    umount -R /mnt 2>/dev/null
+    
+    # Recrear estructura de directorios
+    rm -rf /mnt/*
+    mkdir -p /mnt
+    
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        mkdir -p /mnt/boot/efi
+    else
+        mkdir -p /mnt/boot
+    fi
+    
+    # Intentar montar de nuevo
+    if ! mount "$root_part" /mnt; then
+        log "ERROR" "No se pudo montar ROOT en /mnt"
+        return 1
+    fi
+    
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        if ! mount "$boot_part" /mnt/boot/efi; then
+            log "ERROR" "No se pudo montar EFI en /mnt/boot/efi"
+            return 1
+        fi
+    else
+        if ! mount "$boot_part" /mnt/boot; then
+            log "ERROR" "No se pudo montar BOOT en /mnt/boot"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
 
 prepare_disk() {
     log "INFO" "Iniciando preparación del disco"
@@ -746,8 +785,14 @@ prepare_disk() {
         create_mbr_partitions
     fi
     
-    # Verificar particiones creadas
-    verify_partitions || return 1
+    # Verificar particiones y puntos de montaje
+    if ! verify_partitions; then
+        log "WARN" "Problemas con los puntos de montaje, intentando reparar..."
+        if ! repair_mount_points "$root_part" "$boot_part"; then
+            log "ERROR" "No se pudieron reparar los puntos de montaje"
+            return 1
+        fi
+    fi
     
     return 0
 }
@@ -1093,31 +1138,68 @@ verify_partitions() {
     echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
     echo -e "${CYAN}║      Verificación de Particiones     ║${RESET}"
     echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+
+    # Esperar a que el sistema de archivos se estabilice
+    sleep 2
+    
+    # Verificar que el punto de montaje /mnt existe
+    if [[ ! -d "/mnt" ]]; then
+        mkdir -p /mnt
+        log "WARN" "Creado directorio /mnt"
+    fi
     
     # Verificar puntos de montaje
-    local mount_points=(
-        "/mnt"
-        "/mnt/boot"
-    )
+    local mount_points=()
+    local required_dirs=()
     
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        mount_points+=("/mnt/boot/efi")
+        mount_points=("/mnt" "/mnt/boot/efi")
+        required_dirs=("/mnt/boot" "/mnt/boot/efi")
+    else
+        mount_points=("/mnt" "/mnt/boot")
+        required_dirs=("/mnt/boot")
     fi
+    
+    # Crear directorios necesarios si no existen
+    for dir in "${required_dirs[@]}"; do
+        if [[ ! -d "$dir" ]]; then
+            mkdir -p "$dir"
+            log "WARN" "Creado directorio $dir"
+        fi
+    done
     
     local all_mounted=true
     for point in "${mount_points[@]}"; do
         echo -ne "${WHITE}Verificando $point...${RESET} "
-        if ! mountpoint -q "$point"; then
-            echo -e "${RED}✘ No montado${RESET}"
+        if ! mountpoint -q "$point" 2>/dev/null; then
+            echo -e "${YELLOW}✘ No montado${RESET}"
             all_mounted=false
+            
+            # Intentar recuperar el montaje
+            local part_uuid=$(findmnt -n -o SOURCE "$point" 2>/dev/null)
+            if [[ -n "$part_uuid" ]]; then
+                echo -ne "${YELLOW}Intentando montar nuevamente...${RESET} "
+                if mount "$part_uuid" "$point" 2>/dev/null; then
+                    echo -e "${GREEN}✔${RESET}"
+                    all_mounted=true
+                else
+                    echo -e "${RED}✘${RESET}"
+                fi
+            fi
         else
             echo -e "${GREEN}✔${RESET}"
         fi
     done
     
     if ! $all_mounted; then
-        log "ERROR" "No todos los puntos de montaje están configurados"
-        return 1
+        echo -e "\n${YELLOW}ADVERTENCIA: No todos los puntos de montaje están configurados${RESET}"
+        echo -e "¿Desea continuar de todos modos? (s/N): "
+        read -r response
+        if [[ ! "$response" =~ ^[Ss]$ ]]; then
+            log "ERROR" "Instalación cancelada por el usuario"
+            return 1
+        fi
+        log "WARN" "Continuando sin todos los puntos de montaje"
     fi
     
     # Mostrar estructura final

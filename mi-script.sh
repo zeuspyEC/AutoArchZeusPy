@@ -354,44 +354,209 @@ check_system_requirements() {
     return 0
 }
 
+# Función modificada para verificar y listar todas las particiones disponibles
 verify_disk_space() {
-    log "INFO" "Verificando espacio en disco disponible"
+    log "INFO" "Analizando dispositivos de almacenamiento"
     
-    local min_space=$((15 * 1024 * 1024 * 1024)) # 15GB en bytes
-    local disk_list
-    disk_list=$(lsblk -dpno NAME,SIZE,TYPE,MODEL | grep disk)
+    echo -e "\n${PURPLE}== Dispositivos de Almacenamiento Disponibles ==${NC}"
     
-    echo -e "\n${PURPLE}Discos disponibles:${NC}\n"
+    # Obtener lista completa de dispositivos y particiones
+    local devices
+    mapfile -t devices < <(lsblk -pno NAME,SIZE,TYPE,MOUNTPOINT,MODEL | grep -E 'disk|part')
     
-    if [[ -z "$disk_list" ]]; then
-        log "ERROR" "No se encontraron discos disponibles"
+    if [[ ${#devices[@]} -eq 0 ]]; then
+        log "ERROR" "No se encontraron dispositivos de almacenamiento"
         return 1
-    fi
-    
-    # Mostrar información de discos disponibles
-    local disk_count=0
-    local valid_disks=()
-    while IFS= read -r disk_info; do
-    ((disk_count++))
-    local disk_name=$(echo "$disk_info" | awk '{print $1}')
-    local disk_size=$(blockdev --getsize64 "$disk_name" 2>/dev/null)
-    local disk_model=$(echo "$disk_info" | awk '{$1=$2=$3=""; print $0}' | xargs)
-    
-    if ((disk_size >= min_space)); then
-        echo -e "${GREEN}$disk_count. $disk_name - $(format_size "$disk_size") - $disk_model${NC}"
-        valid_disks+=("$disk_name")
-    else
-        echo -e "${ERROR}$disk_count. $disk_name - $(format_size "$disk_size") - $disk_model (Espacio insuficiente)${NC}"
-    fi
-    done <<< "$disk_list"
-    
-    if ((${#valid_disks[@]} == 0)); then
-        log "ERROR" "No se encontró ningún disco con suficiente espacio (mínimo 15GB)"
-        return 1
-    fi
-
-    return 0
     }
+    
+    # Mostrar todos los dispositivos y sus particiones
+    echo -e "\n${CYAN}Discos y Particiones:${NC}"
+    local index=1
+    declare -A device_map
+    
+    for device in "${devices[@]}"; do
+        local name size type mountpoint model
+        read -r name size type mountpoint model <<< "$device"
+        
+        if [[ $type == "disk" ]]; then
+            echo -e "\n${GREEN}$index) Disco: $name${NC}"
+            echo -e "   Tamaño: $size"
+            echo -e "   Modelo: $model"
+            device_map[$index]="$name"
+            ((index++))
+        else
+            echo -e "   ├─ Partición: $name"
+            echo -e "   │  Tamaño: $size"
+            [[ -n $mountpoint ]] && echo -e "   │  Montado en: $mountpoint"
+        fi
+    done
+    
+    # Permitir al usuario seleccionar el dispositivo
+    while true; do
+        echo -e "\n${YELLOW}Seleccione el número del disco a utilizar (1-$((index-1))): ${NC}"
+        read -r selection
+        
+        if [[ -n "${device_map[$selection]}" ]]; then
+            TARGET_DISK="${device_map[$selection]}"
+            break
+        fi
+        echo -e "${RED}Selección inválida${NC}"
+    done
+    
+    # Mostrar información detallada del disco seleccionado
+    echo -e "\n${PURPLE}Información detallada del disco seleccionado:${NC}"
+    fdisk -l "$TARGET_DISK"
+    
+    # Verificar si hay sistemas operativos instalados
+    if command -v os-prober &>/dev/null; then
+        echo -e "\n${YELLOW}Sistemas operativos detectados:${NC}"
+        os-prober | grep "$TARGET_DISK" || echo "Ninguno detectado"
+    fi
+    
+    # Preguntar al usuario cómo desea proceder
+    echo -e "\n${YELLOW}¿Cómo desea proceder?${NC}"
+    select option in "Usar disco completo" "Gestionar particiones manualmente" "Cancelar"; do
+        case $option in
+            "Usar disco completo")
+                show_warning_message
+                return $?
+                ;;
+            "Gestionar particiones manualmente")
+                manage_partitions_manually
+                return $?
+                ;;
+            "Cancelar")
+                log "INFO" "Operación cancelada por el usuario"
+                return 1
+                ;;
+        esac
+    done
+}
+
+manage_partitions_manually() {
+    log "INFO" "Iniciando gestión manual de particiones"
+    
+    # Mostrar particiones actuales
+    echo -e "\n${CYAN}Particiones actuales:${NC}"
+    fdisk -l "$TARGET_DISK"
+    
+    # Preguntar si desea crear nueva tabla de particiones
+    echo -e "\n${YELLOW}¿Desea crear una nueva tabla de particiones? (s/N):${NC}"
+    read -r create_new
+    
+    if [[ "$create_new" =~ ^[Ss]$ ]]; then
+        echo -e "\n${YELLOW}Seleccione el tipo de tabla de particiones:${NC}"
+        select table in "GPT (UEFI)" "MBR (BIOS)" "Cancelar"; do
+            case $table in
+                "GPT (UEFI)")
+                    parted -s "$TARGET_DISK" mklabel gpt
+                    break
+                    ;;
+                "MBR (BIOS)")
+                    parted -s "$TARGET_DISK" mklabel msdos
+                    break
+                    ;;
+                "Cancelar")
+                    return 1
+                    ;;
+            esac
+        done
+    fi
+    
+    # Lanzar cfdisk para particionamiento interactivo
+    if ! cfdisk "$TARGET_DISK"; then
+        log "ERROR" "Error al ejecutar cfdisk"
+        return 1
+    fi
+    
+    # Listar particiones creadas
+    echo -e "\n${CYAN}Particiones creadas:${NC}"
+    lsblk "$TARGET_DISK"
+    
+    # Seleccionar particiones para la instalación
+    local root_part=""
+    local boot_part=""
+    local swap_part=""
+    
+    echo -e "\n${YELLOW}Ingrese la partición para ROOT (ejemplo: ${TARGET_DISK}1):${NC}"
+    read -r root_part
+    
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -e "${YELLOW}Ingrese la partición para EFI (ejemplo: ${TARGET_DISK}2):${NC}"
+        read -r boot_part
+    else
+        echo -e "${YELLOW}Ingrese la partición para BOOT (ejemplo: ${TARGET_DISK}2):${NC}"
+        read -r boot_part
+    fi
+    
+    echo -e "${YELLOW}Ingrese la partición para SWAP (ejemplo: ${TARGET_DISK}3) o presione Enter para omitir:${NC}"
+    read -r swap_part
+    
+    # Formatear y montar particiones
+    if ! format_and_mount_partitions "$root_part" "$boot_part" "$swap_part"; then
+        log "ERROR" "Error al formatear y montar particiones"
+        return 1
+    fi
+    
+    return 0
+}
+format_and_mount_partitions() {
+    local root_part="$1"
+    local boot_part="$2"
+    local swap_part="$3"
+    
+    # Formatear ROOT
+    echo -e "\n${CYAN}Formateando partición ROOT...${NC}"
+    if ! mkfs.ext4 -F "$root_part"; then
+        log "ERROR" "Error al formatear partición ROOT"
+        return 1
+    fi
+    
+    # Montar ROOT
+    if ! mount "$root_part" /mnt; then
+        log "ERROR" "Error al montar partición ROOT"
+        return 1
+    fi
+    
+    # Manejar partición BOOT/EFI
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -e "${CYAN}Formateando partición EFI...${NC}"
+        if ! mkfs.fat -F32 "$boot_part"; then
+            log "ERROR" "Error al formatear partición EFI"
+            return 1
+        fi
+        # Crear y montar directorio EFI
+        mkdir -p /mnt/boot/efi
+        if ! mount "$boot_part" /mnt/boot/efi; then
+            log "ERROR" "Error al montar partición EFI"
+            return 1
+        fi
+    else
+        echo -e "${CYAN}Formateando partición BOOT...${NC}"
+        if ! mkfs.ext4 -F "$boot_part"; then
+            log "ERROR" "Error al formatear partición BOOT"
+            return 1
+        fi
+        # Crear y montar directorio BOOT
+        mkdir -p /mnt/boot
+        if ! mount "$boot_part" /mnt/boot; then
+            log "ERROR" "Error al montar partición BOOT"
+            return 1
+        fi
+    fi
+    
+    # Configurar SWAP si se especificó
+    if [[ -n "$swap_part" ]]; then
+        echo -e "${CYAN}Configurando SWAP...${NC}"
+        if ! mkswap "$swap_part" || ! swapon "$swap_part"; then
+            log "ERROR" "Error al configurar SWAP"
+            return 1
+        fi
+    fi
+    
+    log "SUCCESS" "Particiones formateadas y montadas correctamente"
+    return 0
+}
 
 check_network_connectivity() {
 log "INFO" "Verificando conectividad de red"

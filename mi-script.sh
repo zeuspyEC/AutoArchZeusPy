@@ -55,14 +55,14 @@ log() {
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
     local function_name="${FUNCNAME[1]:-main}"
     local line_number="${BASH_LINENO[0]}"
-    
+
     local log_entry="[${timestamp}] [${level}] [${function_name}:${line_number}] ${message}"
-    
+
     case "${level}" in
         "DEBUG")
             echo -e "${CYAN}${log_entry}${NC}" >> "${DEBUG_LOG}"
             ;;
-        "INFO") 
+        "INFO")
             echo -e "${GREEN}${log_entry}${NC}" | tee -a "${LOG_FILE}"
             ;;
         "SUCCESS")

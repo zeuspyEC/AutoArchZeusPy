@@ -11,6 +11,9 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+set +e  # No terminar en errores
+trap 'error_handler $? $LINENO $BASH_LINENO "$BASH_COMMAND" $(printf "::%s" ${FUNCNAME[@]:-})' ERR
+
 # Colores y estilos mejorados
 declare -gr RESET="\033[0m"
 declare -gr BOLD="\033[1m"
@@ -660,92 +663,93 @@ setup_ethernet_connection() {
 # ==============================================================================
 
 prepare_disk() {
-    log "INFO" "Preparando disco para instalación"
+    log "INFO" "Iniciando preparación del disco"
     
-    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║      Configuración de Discos         ║${RESET}"
-    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    # Verificar si hay sistemas operativos instalados
+    detect_existing_os
     
     # Listar discos disponibles
     local available_disks
-    available_disks=($(lsblk -dpno NAME,SIZE,TYPE,MODEL | grep disk || echo ""))
+    mapfile -t available_disks < <(lsblk -dpno NAME,SIZE,MODEL | grep -E "^/dev/(sd|nvme|vd)")
     
-    if [[ -z "${available_disks[*]}" ]]; then
+    if [[ ${#available_disks[@]} -eq 0 ]]; then
         log "ERROR" "No se encontraron discos disponibles"
         return 1
     fi
     
-    # Mostrar información detallada de discos
-    echo -e "${WHITE}Discos disponibles:${RESET}\n"
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║         Discos Disponibles             ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    # Mostrar discos con información detallada
     local i=1
     for disk in "${available_disks[@]}"; do
-        local disk_name=$(echo "$disk" | cut -d' ' -f1)
-        echo -e "${CYAN}$i) Disco: $disk_name${RESET}"
-        echo -e "   $(echo "$disk" | cut -d' ' -f2-)"
-        
-        # Mostrar particiones actuales
-        echo -e "\n   ${WHITE}Particiones actuales:${RESET}"
-        lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE "$disk_name" | sed 's/^/   /'
-        
-        # Buscar sistemas operativos existentes
-        if command -v os-prober &>/dev/null; then
-            echo -e "\n   ${WHITE}Sistemas operativos detectados:${RESET}"
-            os-prober | grep "$disk_name" | sed 's/^/   /' || echo "   Ninguno detectado"
-        fi
-        echo
+        echo -e "${CYAN}$i)${RESET} $disk"
         ((i++))
     done
     
-    # Selección de disco
+    # Seleccionar disco
     while true; do
-        echo -ne "\n${YELLOW}Seleccione el número del disco para la instalación (1-${#available_disks[@]}):${RESET} "
+        echo -ne "\n${YELLOW}Seleccione el disco para la instalación (1-${#available_disks[@]}):${RESET} "
         read -r disk_number
         
-        if [[ $disk_number =~ ^[0-9]+$ ]] && \
-           ((disk_number > 0 && disk_number <= ${#available_disks[@]})); then
+        if [[ $disk_number =~ ^[0-9]+$ ]] && ((disk_number > 0 && disk_number <= ${#available_disks[@]})); then
             TARGET_DISK=$(echo "${available_disks[$((disk_number-1))]}" | cut -d' ' -f1)
             break
         fi
         echo -e "${RED}Selección inválida${RESET}"
     done
     
-    # Mostrar opciones de particionamiento
-    echo -e "\n${WHITE}Opciones de particionamiento:${RESET}"
-    select option in \
-        "Automático (usar disco completo)" \
-        "Manual (particionamiento personalizado)" \
-        "Usar particiones existentes" \
-        "Cancelar"; do
-        case $option in
-            "Automático (usar disco completo)")
-                show_warning_message
-                if [[ $? -eq 0 ]]; then
-                    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-                        create_uefi_partitions
-                    else
-                        create_bios_partitions
-                    fi
-                fi
-                break
-                ;;
-            "Manual (particionamiento personalizado)")
-                manage_partitions_manually
-                break
-                ;;
-            "Usar particiones existentes")
-                use_existing_partitions
-                break
-                ;;
-            "Cancelar")
-                log "INFO" "Operación cancelada por el usuario"
-                return 1
-                ;;
-        esac
-    done
+    # Verificar si el disco está en uso
+    if is_disk_mounted "$TARGET_DISK"; then
+        log "WARN" "El disco $TARGET_DISK tiene particiones montadas"
+        echo -e "${YELLOW}¿Desea intentar desmontar las particiones? (s/N):${RESET} "
+        read -r response
+        if [[ "$response" =~ ^[Ss]$ ]]; then
+            unmount_all "$TARGET_DISK"
+        else
+            return 1
+        fi
+    fi
     
-    # Verificar particionamiento
-    verify_partitions
-    return $?
+    # Seleccionar esquema de particionamiento
+    local partition_scheme
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        partition_scheme="gpt"
+        echo -e "\n${CYAN}Modo UEFI detectado - usando esquema GPT${RESET}"
+    else
+        echo -e "\n${YELLOW}Seleccione esquema de particionamiento:${RESET}"
+        select scheme in "MBR (BIOS Legacy)" "GPT (Avanzado)" "Cancelar"; do
+            case $scheme in
+                "MBR (BIOS Legacy)")
+                    partition_scheme="mbr"
+                    break
+                    ;;
+                "GPT (Avanzado)")
+                    partition_scheme="gpt"
+                    break
+                    ;;
+                "Cancelar")
+                    return 1
+                    ;;
+            esac
+        done
+    fi
+    
+    # Mostrar advertencia
+    show_warning_message || return 1
+    
+    # Crear esquema de partición
+    if [[ "$partition_scheme" == "gpt" ]]; then
+        create_gpt_partitions
+    else
+        create_mbr_partitions
+    fi
+    
+    # Verificar particiones creadas
+    verify_partitions || return 1
+    
+    return 0
 }
 
 show_warning_message() {
@@ -759,8 +763,9 @@ show_warning_message() {
     [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
 }
 
-create_uefi_partitions() {
-    log "INFO" "Creando particiones UEFI"
+# Función para crear particiones GPT
+create_gpt_partitions() {
+    log "INFO" "Creando particiones GPT"
     
     # Calcular tamaños
     local disk_size
@@ -771,22 +776,19 @@ create_uefi_partitions() {
     local root_size=$((disk_size - efi_size - swap_size))
     
     # Crear tabla GPT
-    echo -e "\n${CYAN}Creando tabla de particiones GPT...${RESET}"
-    if ! parted -s "$TARGET_DISK" mklabel gpt; then
+    if ! retry_command parted -s "$TARGET_DISK" mklabel gpt; then
         log "ERROR" "Fallo al crear tabla GPT"
         return 1
     fi
     
-    # Crear particiones
-    echo -e "${CYAN}Creando particiones...${RESET}"
-    if ! parted -s "$TARGET_DISK" \
-        mkpart ESP fat32 1MiB "${efi_size}MiB" \
+    echo -e "\n${CYAN}Creando particiones...${RESET}"
+    
+    # Crear particiones con retry
+    retry_command parted -s "$TARGET_DISK" \
+        mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
         set 1 esp on \
-        mkpart primary ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
-        mkpart primary linux-swap "$((efi_size + root_size))MiB" 100%; then
-        log "ERROR" "Fallo al crear particiones UEFI"
-        return 1
-    fi
+        mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
+        mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%
     
     sleep 2  # Esperar a que el kernel detecte las nuevas particiones
     
@@ -796,55 +798,43 @@ create_uefi_partitions() {
     local swap_part="${TARGET_DISK}3"
     
     echo -e "${CYAN}Formateando particiones...${RESET}"
+    
+    # Formatear EFI
     echo -ne "  EFI (${efi_part})... "
-    if ! mkfs.fat -F32 "$efi_part"; then
+    if retry_command mkfs.fat -F32 "$efi_part"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
         echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al formatear partición EFI"
         return 1
     fi
-    echo -e "${GREEN}✔${RESET}"
     
+    # Formatear ROOT
     echo -ne "  ROOT (${root_part})... "
-    if ! mkfs.ext4 -F "$root_part"; then
+    if retry_command mkfs.ext4 -F "$root_part"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
         echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al formatear partición ROOT"
         return 1
     fi
-    echo -e "${GREEN}✔${RESET}"
     
+    # Formatear SWAP
     echo -ne "  SWAP (${swap_part})... "
-    if ! mkswap "$swap_part" || ! swapon "$swap_part"; then
+    if retry_command mkswap "$swap_part" && retry_command swapon "$swap_part"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
         echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al configurar SWAP"
         return 1
     fi
-    echo -e "${GREEN}✔${RESET}"
     
     # Montar particiones
-    echo -e "\n${CYAN}Montando particiones...${RESET}"
+    mount_partitions "$root_part" "$efi_part" || return 1
     
-    echo -ne "  Montando ROOT... "
-    if ! mount "$root_part" /mnt; then
-        echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al montar ROOT"
-        return 1
-    fi
-    echo -e "${GREEN}✔${RESET}"
-    
-    echo -ne "  Creando y montando EFI... "
-    if ! mkdir -p /mnt/boot/efi || ! mount "$efi_part" /mnt/boot/efi; then
-        echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al montar EFI"
-        return 1
-    fi
-    echo -e "${GREEN}✔${RESET}"
-    
-    log "SUCCESS" "Particionamiento UEFI completado exitosamente"
     return 0
 }
 
-create_bios_partitions() {
-    log "INFO" "Creando particiones BIOS"
+# Función para crear particiones MBR
+create_mbr_partitions() {
+    log "INFO" "Creando particiones MBR"
     
     # Calcular tamaños
     local disk_size
@@ -855,22 +845,19 @@ create_bios_partitions() {
     local root_size=$((disk_size - boot_size - swap_size))
     
     # Crear tabla MBR
-    echo -e "\n${CYAN}Creando tabla de particiones MBR...${RESET}"
-    if ! parted -s "$TARGET_DISK" mklabel msdos; then
+    if ! retry_command parted -s "$TARGET_DISK" mklabel msdos; then
         log "ERROR" "Fallo al crear tabla MBR"
         return 1
     fi
     
-    # Crear particiones
-    echo -e "${CYAN}Creando particiones...${RESET}"
-    if ! parted -s "$TARGET_DISK" \
+    echo -e "\n${CYAN}Creando particiones...${RESET}"
+    
+    # Crear particiones con retry
+    retry_command parted -s "$TARGET_DISK" \
         mkpart primary ext4 1MiB "${boot_size}MiB" \
         set 1 boot on \
         mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
-        mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%; then
-        log "ERROR" "Fallo al crear particiones BIOS"
-        return 1
-    fi
+        mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%
     
     sleep 2  # Esperar a que el kernel detecte las nuevas particiones
     
@@ -880,176 +867,145 @@ create_bios_partitions() {
     local swap_part="${TARGET_DISK}3"
     
     echo -e "${CYAN}Formateando particiones...${RESET}"
+    
+    # Formatear BOOT
     echo -ne "  BOOT (${boot_part})... "
-    if ! mkfs.ext4 -F "$boot_part"; then
+    if retry_command mkfs.ext4 -F "$boot_part"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
         echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al formatear partición BOOT"
         return 1
     fi
-    echo -e "${GREEN}✔${RESET}"
     
+    # Formatear ROOT
     echo -ne "  ROOT (${root_part})... "
-    if ! mkfs.ext4 -F "$root_part"; then
+    if retry_command mkfs.ext4 -F "$root_part"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
         echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al formatear partición ROOT"
         return 1
     fi
-    echo -e "${GREEN}✔${RESET}"
     
+    # Formatear SWAP
     echo -ne "  SWAP (${swap_part})... "
-    if ! mkswap "$swap_part" || ! swapon "$swap_part"; then
+    if retry_command mkswap "$swap_part" && retry_command swapon "$swap_part"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
         echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al configurar SWAP"
         return 1
     fi
-    echo -e "${GREEN}✔${RESET}"
     
     # Montar particiones
-    echo -e "\n${CYAN}Montando particiones...${RESET}"
+    mount_partitions "$root_part" "$boot_part" || return 1
     
-    echo -ne "  Montando ROOT... "
-    if ! mount "$root_part" /mnt; then
-        echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al montar ROOT"
-        return 1
-    fi
-    echo -e "${GREEN}✔${RESET}"
-    
-    echo -ne "  Creando y montando BOOT... "
-    if ! mkdir -p /mnt/boot || ! mount "$boot_part" /mnt/boot; then
-        echo -e "${RED}✘${RESET}"
-        log "ERROR" "Fallo al montar BOOT"
-        return 1
-    fi
-    echo -e "${GREEN}✔${RESET}"
-    
-    log "SUCCESS" "Particionamiento BIOS completado exitosamente"
     return 0
 }
 
-manage_partitions_manually() {
-    log "INFO" "Iniciando particionamiento manual"
+# Función para montar particiones de forma segura
+mount_partitions() {
+    local root_part="$1"
+    local boot_part="$2"
     
-    echo -e "\n${CYAN}Estado actual del disco:${RESET}"
-    fdisk -l "$TARGET_DISK"
+    echo -e "\n${CYAN}Montando particiones...${RESET}"
     
-    echo -e "\n${YELLOW}¿Desea crear una nueva tabla de particiones? (s/N):${RESET}"
-    read -r create_new
-    
-    if [[ "$create_new" =~ ^[Ss]$ ]]; then
-        # Seleccionar tipo de tabla
-        echo -e "\n${WHITE}Seleccione el tipo de tabla de particiones:${RESET}"
-        select table in "GPT (recomendado para UEFI)" "MBR (para BIOS legacy)" "Cancelar"; do
-            case $table in
-                "GPT (recomendado para UEFI)")
-                    if ! parted -s "$TARGET_DISK" mklabel gpt; then
-                        log "ERROR" "Fallo al crear tabla GPT"
-                        return 1
-                    fi
-                    break
-                    ;;
-                "MBR (para BIOS legacy)")
-                    if ! parted -s "$TARGET_DISK" mklabel msdos; then
-                        log "ERROR" "Fallo al crear tabla MBR"
-                        return 1
-                    fi
-                    break
-                    ;;
-                "Cancelar")
-                    return 1
-                    ;;
-            esac
-        done
-    fi
-    
-    # Mostrar instrucciones de particionamiento
-    echo -e "\n${CYAN}Iniciando herramienta de particionamiento cfdisk...${RESET}"
-    echo -e "${WHITE}Cree las siguientes particiones:${RESET}"
-    
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -e "  • ${CYAN}EFI:${RESET}  512MB, tipo 'EFI System'"
-        echo -e "  • ${CYAN}ROOT:${RESET} Resto del espacio, tipo 'Linux filesystem'"
-        echo -e "  • ${CYAN}SWAP:${RESET} (Opcional) Igual a RAM, tipo 'Linux swap'"
+    # Montar ROOT
+    echo -ne "  Montando ROOT... "
+    if retry_command mount "$root_part" /mnt; then
+        echo -e "${GREEN}✔${RESET}"
     else
-        echo -e "  • ${CYAN}BOOT:${RESET} 512MB, tipo 'Linux filesystem'"
-        echo -e "  • ${CYAN}ROOT:${RESET} Resto del espacio, tipo 'Linux filesystem'"
-        echo -e "  • ${CYAN}SWAP:${RESET} (Opcional) Igual a RAM, tipo 'Linux swap'"
-    fi
-    
-    echo -e "\nPresione ${GREEN}[Enter]${RESET} para continuar..."
-    read -r
-    
-    if ! cfdisk "$TARGET_DISK"; then
-        log "ERROR" "Error al ejecutar cfdisk"
+        echo -e "${RED}✘${RESET}"
         return 1
     fi
     
-    # Mostrar resultado
-    echo -e "\n${CYAN}Particiones creadas:${RESET}"
-    lsblk "$TARGET_DISK"
+    # Montar BOOT/EFI
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -ne "  Montando EFI... "
+        mkdir -p /mnt/boot/efi
+        if retry_command mount "$boot_part" /mnt/boot/efi; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            return 1
+        fi
+    else
+        echo -ne "  Montando BOOT... "
+        mkdir -p /mnt/boot
+        if retry_command mount "$boot_part" /mnt/boot; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            return 1
+        fi
+    fi
     
-    # Seleccionar y formatear particiones
-    select_and_format_partitions
+    return 0
+}
+
+# Función para montar particiones de forma segura
+mount_partitions() {
+    local root_part="$1"
+    local boot_part="$2"
+    
+    echo -e "\n${CYAN}Montando particiones...${RESET}"
+    
+    # Montar ROOT
+    echo -ne "  Montando ROOT... "
+    if retry_command mount "$root_part" /mnt; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        return 1
+    fi
+    
+    # Montar BOOT/EFI
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -ne "  Montando EFI... "
+        mkdir -p /mnt/boot/efi
+        if retry_command mount "$boot_part" /mnt/boot/efi; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            return 1
+        fi
+    else
+        echo -ne "  Montando BOOT... "
+        mkdir -p /mnt/boot
+        if retry_command mount "$boot_part" /mnt/boot; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+# Función para verificar si un disco está montado
+is_disk_mounted() {
+    local disk="$1"
+    lsblk -no MOUNTPOINT "$disk" | grep -q .
     return $?
 }
 
-select_and_format_partitions() {
-    local root_part=""
-    local boot_part=""
-    local swap_part=""
+# Función para desmontar todas las particiones de un disco
+unmount_all() {
+    local disk="$1"
+    local partitions
     
-    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║      Selección de Particiones        ║${RESET}"
-    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    mapfile -t partitions < <(lsblk -nlo NAME,MOUNTPOINT "$disk" | awk '$2 != "" {print $1}')
     
-    # Seleccionar partición ROOT
-    while [[ ! -b "$root_part" ]]; do
-        echo -e "${WHITE}Particiones disponibles:${RESET}"
-        lsblk -o NAME,SIZE,TYPE,FSTYPE "$TARGET_DISK"
-        echo -ne "\n${YELLOW}Ingrese la partición para ROOT (ejemplo: ${TARGET_DISK}1):${RESET} "
-        read -r root_part
-        if [[ ! -b "$root_part" ]]; then
-            echo -e "${RED}Error: Partición inválida${RESET}"
+    for part in "${partitions[@]}"; do
+        echo -ne "${CYAN}Desmontando /dev/$part... ${RESET}"
+        if umount "/dev/$part" 2>/dev/null; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            return 1
         fi
     done
     
-    # Seleccionar partición BOOT/EFI
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        while [[ ! -b "$boot_part" ]]; do
-            echo -ne "\n${YELLOW}Ingrese la partición para EFI (ejemplo: ${TARGET_DISK}2):${RESET} "
-            read -r boot_part
-            if [[ ! -b "$boot_part" ]]; then
-                echo -e "${RED}Error: Partición inválida${RESET}"
-            fi
-        done
-    else
-        while [[ ! -b "$boot_part" ]]; do
-            echo -ne "\n${YELLOW}Ingrese la partición para BOOT (ejemplo: ${TARGET_DISK}2):${RESET} "
-            read -r boot_part
-            if [[ ! -b "$boot_part" ]]; then
-                echo -e "${RED}Error: Partición inválida${RESET}"
-            fi
-        done
-    fi
-    
-    # Seleccionar partición SWAP (opcional)
-    echo -ne "\n${YELLOW}¿Desea configurar una partición SWAP? (s/N):${RESET} "
-    read -r use_swap
-    if [[ "$use_swap" =~ ^[Ss]$ ]]; then
-        while [[ ! -b "$swap_part" ]]; do
-            echo -ne "${YELLOW}Ingrese la partición para SWAP (ejemplo: ${TARGET_DISK}3):${RESET} "
-            read -r swap_part
-            if [[ ! -b "$swap_part" ]]; then
-                echo -e "${RED}Error: Partición inválida${RESET}"
-            fi
-        done
-    fi
-    
-    # Formatear y montar particiones
-    format_and_mount_partitions "$root_part" "$boot_part" "$swap_part"
-    return $?
+    return 0
 }
-
 format_and_mount_partitions() {
     local root_part="$1"
     local boot_part="$2"
@@ -1800,7 +1756,8 @@ finalize_installation() {
 # Función Principal
 # ==============================================================================
 
-detect_other_os() {
+# Función para detectar sistemas operativos existentes
+detect_existing_os() {
     log "INFO" "Detectando otros sistemas operativos"
     
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
@@ -1809,110 +1766,52 @@ detect_other_os() {
     
     # Instalar os-prober si no está presente
     if ! command -v os-prober &>/dev/null; then
-        echo -e "${YELLOW}Instalando os-prober...${RESET}"
-        pacman -Sy --noconfirm os-prober
+        retry_command pacman -Sy --noconfirm os-prober
     fi
     
-    local detected_os=()
-    local disk_list
-    disk_list=($(lsblk -pndo NAME))
+    echo -e "\n${CYAN}Analizando discos en busca de sistemas operativos...${RESET}\n"
     
-    for disk in "${disk_list[@]}"; do
-        echo -e "${WHITE}Analizando disco: ${CYAN}$disk${RESET}"
+    local found_os=false
+    local disks
+    mapfile -t disks < <(lsblk -dpno NAME)
+    
+    for disk in "${disks[@]}"; do
         local partitions
-        partitions=($(lsblk -pnlo NAME "$disk" | grep -v "^$disk$"))
+        mapfile -t partitions < <(lsblk -pnlo NAME "$disk" | grep -v "^$disk$")
         
         for part in "${partitions[@]}"; do
-            # Intentar montar la partición temporalmente
-            mkdir -p /mnt/os-detect
-            if mount "$part" /mnt/os-detect 2>/dev/null; then
+            # Crear punto de montaje temporal
+            local tmp_mount="/tmp/os_detect_${part//\//_}"
+            mkdir -p "$tmp_mount"
+            
+            # Intentar montar la partición
+            if mount "$part" "$tmp_mount" 2>/dev/null; then
                 # Buscar Windows
-                if [[ -d "/mnt/os-detect/Windows" ]]; then
-                    detected_os+=("Windows (en $part)")
-                    echo -e "  ${GREEN}✔${RESET} Encontrado Windows en $part"
+                if [[ -d "$tmp_mount/Windows" ]]; then
+                    echo -e "${GREEN}✔${RESET} Windows detectado en $part"
+                    found_os=true
                 fi
                 
                 # Buscar Linux
-                if [[ -d "/mnt/os-detect/boot" ]]; then
-                    if [[ -f "/mnt/os-detect/etc/os-release" ]]; then
-                        local os_name
-                        os_name=$(grep "^NAME=" /mnt/os-detect/etc/os-release | cut -d'"' -f2)
-                        detected_os+=("$os_name (en $part)")
-                        echo -e "  ${GREEN}✔${RESET} Encontrado $os_name en $part"
-                    fi
+                if [[ -f "$tmp_mount/etc/os-release" ]]; then
+                    local os_name
+                    os_name=$(grep "^NAME=" "$tmp_mount/etc/os-release" | cut -d'"' -f2)
+                    echo -e "${GREEN}✔${RESET} $os_name detectado en $part"
+                    found_os=true
                 fi
-                umount /mnt/os-detect
+                
+                umount "$tmp_mount"
             fi
+            rmdir "$tmp_mount"
         done
     done
     
-    rm -rf /mnt/os-detect
-    
-    if ((${#detected_os[@]} > 0)); then
-        echo -e "\n${YELLOW}¡Atención! Se detectaron otros sistemas operativos.${RESET}"
-        echo -e "${YELLOW}Se configurará GRUB para dual/multi boot.${RESET}\n"
-        echo -e "${WHITE}Sistemas detectados:${RESET}"
-        printf '%s\n' "${detected_os[@]}" | sed 's/^/  • /'
-    else
-        echo -e "\n${WHITE}No se detectaron otros sistemas operativos${RESET}"
+    if $found_os; then
+        echo -e "\n${YELLOW}¡ADVERTENCIA! Se encontraron otros sistemas operativos${RESET}"
+        echo -e "${YELLOW}Se configurará el sistema para dual boot${RESET}"
+        sleep 2
     fi
-    
-    return 0
 }
-
-main() {
-    # Iniciar contador de tiempo
-    local start_time
-    start_time=$(date +%s)
-    
-    # Inicializar script
-    init_script
-    
-    # Pasos de instalación
-    local installation_steps=(
-        "check_system_requirements"
-        "check_network_connectivity"
-        "detect_other_os"
-        "prepare_disk"
-        "install_base_system"
-        "configure_system_base"
-        "configure_bootloader"
-        "configure_zeuspy_theme"
-        "generate_installation_report"
-    )
-    
-    # Ejecutar pasos de instalación
-    local total_steps=${#installation_steps[@]}
-    local current=0
-    
-    for step in "${installation_steps[@]}"; do
-        ((current++))
-        echo -e "\n${HEADER}[$current/$total_steps] ${step//_/ }${RESET}"
-        if ! $step; then
-            log "ERROR" "Instalación fallida en: $step"
-            cleanup
-            exit 1
-        fi
-        show_progress "$current" "$total_steps"
-        echo
-    done
-    
-    # Calcular tiempo de instalación
-    local end_time
-    end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    local minutes=$((duration / 60))
-    local seconds=$((duration % 60))
-    
-    # Mostrar resumen y finalizar
-    show_post_install_message
-    
-    return 0
-}
-
-set +e  # No terminar en errores
-trap 'error_handler $? $LINENO $BASH_LINENO "$BASH_COMMAND" $(printf "::%s" ${FUNCNAME[@]:-})' ERR
-
 error_handler() {
     local exit_code=$1
     local line_no=$2
@@ -1970,6 +1869,56 @@ retry_command() {
     
     return 1
 }
+
+main() {
+    # Iniciar contador de tiempo
+    local start_time
+    start_time=$(date +%s)
+    
+    # Inicializar script
+    init_script
+    
+    # Pasos de instalación
+    local installation_steps=(
+    "check_system_requirements"
+    "check_network_connectivity"
+    "detect_other_os"  # Nueva función
+    "prepare_disk"
+    "install_base_system"
+    "configure_system_base"
+    "configure_bootloader"
+    "configure_zeuspy_theme"
+    "generate_installation_report"
+)
+    # Ejecutar pasos de instalación
+    local total_steps=${#installation_steps[@]}
+    local current=0
+    
+    for step in "${installation_steps[@]}"; do
+        ((current++))
+        echo -e "\n${HEADER}[$current/$total_steps] ${step//_/ }${RESET}"
+        if ! $step; then
+            log "ERROR" "Instalación fallida en: $step"
+            cleanup
+            exit 1
+        fi
+        show_progress "$current" "$total_steps"
+        echo
+    done
+    
+    # Calcular tiempo de instalación
+    local end_time
+    end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    local minutes=$((duration / 60))
+    local seconds=$((duration % 60))
+    
+    # Mostrar resumen y finalizar
+    show_post_install_message
+    
+    return 0
+}
+
 
 # Verificar si se ejecuta como root
 if [[ $EUID -ne 0 ]]; then

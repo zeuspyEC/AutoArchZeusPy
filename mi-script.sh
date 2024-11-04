@@ -220,6 +220,52 @@ init_script() {
 # ==============================================================================
 # Funciones de Verificación del Sistema y Red
 # ==============================================================================
+verify_disk_space() {
+    local min_disk=$1
+    echo -ne "${CYAN}Verificando espacio en disco... ${NC}"
+    
+    local total_space
+    total_space=$(df -BG / | awk 'NR==2 {print $4}' | tr -d 'G')
+    
+    if ((total_space < min_disk)); then
+        echo -e "${ERROR}✘${NC}"
+        log "ERROR" "Espacio insuficiente: ${total_space}GB < ${min_disk}GB"
+        return 1
+    fi
+    echo -e "${GREEN}✔ ${total_space}GB${NC}"
+    return 0
+}
+
+show_menu() {
+    local title=$1
+    shift
+    local options=("$@")
+    
+    echo -e "\n${PURPLE}$title${NC}"
+    for i in "${!options[@]}"; do
+        echo -e "${PRIMARY}$((i+1)). ${options[i]}${NC}"
+    done
+    echo
+}
+
+show_warning_message() {
+    echo -e "\n${WARNING}¡ADVERTENCIA!${NC}"
+    echo "Esta operación borrará TODOS los datos en el disco seleccionado."
+    echo -e "${WARNING}¿Está seguro que desea continuar? (s/N):${NC}"
+    read -r response
+    [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
+}
+
+show_progress() {
+    local current=$1
+    local total=$2
+    local percent=$((current * 100 / total))
+    local filled=$((percent / 2))
+    local empty=$((50 - filled))
+    
+    printf "\r${WHITE}Progreso: [%${filled}s%${empty}s] %d%%${NC}" \
+           "$(printf '%0.s=' {1..50})" "" "$percent"
+}
 
 check_system_requirements() {
     log "INFO" "Verificando requisitos del sistema"

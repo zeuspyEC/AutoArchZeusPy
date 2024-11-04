@@ -2,46 +2,69 @@
 
 # ==============================================================================
 # ZeuspyEC Arch Linux Installer
-# Versión: 3.0.1
+# Version: 3.0.2
+# Autor: ZeuspyEC
+# GitHub: https://github.com/zeuspyEC
 # ==============================================================================
 
 # Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
 
-# Variables de colores y estilos
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'  
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-PURPLE='\033[0;35m'
-WHITE='\033[1;37m'
-NC='\033[0m'  # No Color
-ERROR="${RED}"
-SUCCESS="${GREEN}"  
-WARNING="${YELLOW}"
-INFO="${CYAN}"
-HEADER="${PURPLE}"
-INPUT="${YELLOW}"
-PRIMARY="${BLUE}"
-BOLD='\033[1m'
+# Colores y estilos mejorados
+declare -gr RESET="\033[0m"
+declare -gr BOLD="\033[1m"
+declare -gr DIM="\033[2m"
+declare -gr ITALIC="\033[3m"
+declare -gr UNDERLINE="\033[4m"
+declare -gr BLINK="\033[5m"
+declare -gr REVERSE="\033[7m"
+declare -gr HIDDEN="\033[8m"
+
+# Colores normales
+declare -gr BLACK="\033[0;30m"
+declare -gr RED="\033[0;31m"
+declare -gr GREEN="\033[0;32m"
+declare -gr YELLOW="\033[0;33m"
+declare -gr BLUE="\033[0;34m"
+declare -gr PURPLE="\033[0;35m"
+declare -gr CYAN="\033[0;36m"
+declare -gr WHITE="\033[0;37m"
+
+# Colores brillantes
+declare -gr BRIGHT_BLACK="\033[0;90m"
+declare -gr BRIGHT_RED="\033[0;91m"
+declare -gr BRIGHT_GREEN="\033[0;92m"
+declare -gr BRIGHT_YELLOW="\033[0;93m"
+declare -gr BRIGHT_BLUE="\033[0;94m"
+declare -gr BRIGHT_PURPLE="\033[0;95m"
+declare -gr BRIGHT_CYAN="\033[0;96m"
+declare -gr BRIGHT_WHITE="\033[0;97m"
+
+# Variables de estilo
+declare -gr ERROR="${BOLD}${RED}"
+declare -gr SUCCESS="${BOLD}${GREEN}"
+declare -gr WARNING="${BOLD}${YELLOW}"
+declare -gr INFO="${BOLD}${CYAN}"
+declare -gr HEADER="${BOLD}${PURPLE}"
+declare -gr ACCENT="${BOLD}${BLUE}"
 
 # Variables globales
-declare -g SCRIPT_VERSION="3.0.1"
+declare -g SCRIPT_VERSION="3.0.2"
 declare -g BOOT_MODE=""
 declare -g TARGET_DISK=""
 declare -g HOSTNAME=""
-declare -g USERNAME="" 
+declare -g USERNAME=""
 declare -g TIMEZONE=""
+declare -g THEME_SELECTED=""
 
 # Archivos de log
 declare -g LOG_FILE="/tmp/zeuspyec_installer.log"
-declare -g ERROR_LOG="/tmp/zeuspyec_installer_error.log" 
+declare -g ERROR_LOG="/tmp/zeuspyec_installer_error.log"
 declare -g DEBUG_LOG="/tmp/zeuspyec_installer_debug.log"
 
-# Paquetes requeridos
-declare -g REQUIRED_PACKAGES=(
+# Paquetes base requeridos
+declare -g BASE_PACKAGES=(
     "base"
     "base-devel"
     "linux"
@@ -50,127 +73,129 @@ declare -g REQUIRED_PACKAGES=(
     "grub"
     "efibootmgr"
     "sudo"
-    "vim" 
+    "vim"
     "git"
 )
 
+# Paquetes para BSPWM
+declare -g BSPWM_PACKAGES=(
+    "bspwm"
+    "sxhkd"
+    "polybar"
+    "picom"
+    "nitrogen"
+    "rofi"
+    "alacritty"
+    "dunst"
+    "brightnessctl"
+    "network-manager-applet"
+    "pulseaudio"
+    "pavucontrol"
+    "firefox"
+    "thunar"
+    "lxappearance"
+    "neofetch"
+)
+
+# Banner mejorado
+display_banner() {
+    clear
+    echo -e "${BLUE}"
+    cat << "EOF"
+███████╗███████╗██╗   ██╗███████╗██████╗ ██╗   ██╗███████╗ ██████╗
+╚══███╔╝██╔════╝██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝██╔════╝██╔════╝
+  ███╔╝ █████╗  ██║   ██║███████╗██████╔╝ ╚████╔╝ █████╗  ██║     
+ ███╔╝  ██╔══╝  ██║   ██║╚════██║██╔═══╝   ╚██╔╝  ██╔══╝  ██║     
+███████╗███████╗╚██████╔╝███████║██║        ██║   ███████╗╚██████╗
+╚══════╝╚══════╝ ╚═════╝ ╚══════╝╚═╝        ╚═╝   ╚══════╝ ╚═════╝
+EOF
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}"
+    echo -e "${PURPLE}      Arch Linux Installer ${BRIGHT_CYAN}v${SCRIPT_VERSION}${RESET}"
+    echo -e "${BRIGHT_BLUE}      https://github.com/zeuspyEC${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}\n"
+}
+
 # Función de logging mejorada
 log() {
-    local level="${1}"
+    local level="$1"
     shift
-    local message="${*}"
+    local message="$*"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
     local function_name="${FUNCNAME[1]:-main}"
     local line_number="${BASH_LINENO[0]}"
     
-    local log_entry="[${timestamp}] [${level}] [${function_name}:${line_number}] ${message}"
+    # Sanitizar mensaje
+    message=$(echo "$message" | tr -cd '[:print:]\n')
     
-    case "${level}" in
+    # Formato de log
+    local log_entry="[$timestamp] [$level] [$function_name:$line_number] $message"
+    
+    case "$level" in
         "DEBUG")
-            echo -e "${CYAN}${log_entry}${NC}" >> "${DEBUG_LOG}"
+            echo -e "${CYAN}$log_entry${RESET}" >> "$DEBUG_LOG"
             ;;
-        "INFO") 
-            echo -e "${GREEN}${log_entry}${NC}" | tee -a "${LOG_FILE}"
+        "INFO")
+            echo -e "${GREEN}$log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "SUCCESS")
-            echo -e "${GREEN}✔ ${log_entry}${NC}" | tee -a "${LOG_FILE}"
+            echo -e "${BRIGHT_GREEN}✔ $log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "WARN")
-            echo -e "${YELLOW}⚠ ${log_entry}${NC}" | tee -a "${LOG_FILE}"
+            echo -e "${YELLOW}⚠ $log_entry${RESET}" | tee -a "$LOG_FILE"
             ;;
         "ERROR")
-            echo -e "${RED}✘ ${log_entry}${NC}" | tee -a "${ERROR_LOG}"
-            print_system_info >> "${ERROR_LOG}"
+            echo -e "${RED}✘ $log_entry${RESET}" | tee -a "$ERROR_LOG"
+            print_system_info >> "$ERROR_LOG"
             ;;
     esac
 }
 
-# Función para mostrar el banner
-display_banner() {
-    echo -e "${BLUE}"
-    cat << "EOF" 
- ▒███████▒▓█████  █    ██   ██████  ██▓███   ▓██   ██▓▓█████  ▄████▄  
-▒ ▒ ▒ ▄▀░▓█   ▀  ██  ▓██▒▒██    ▒ ▓██░  ██▒  ▒██  ██▒▓█   ▀ ▒██▀ ▀█  
-░ ▒ ▄▀▒░ ▒███   ▓██  ▒██░░ ▓██▄   ▓██░ ██▓▒   ▒██ ██░▒███   ▒▓█    ▄ 
-  ▄▀▒   ░▒▓█  ▄ ▓▓█  ░██░  ▒   ██▒▒██▄█▓▒ ▒   ░ ▐██▓░▒▓█  ▄ ▒▓▓▄ ▄██▒
-▒███████▒░▒████▒▒▒█████▓ ▒██████▒▒▒██▒ ░  ░   ░ ██▒▓░░▒████▒▒ ▓███▀ ░
-░▒▒ ▓░▒░▒░░ ▒░ ░░▒▓▒ ▒ ▒ ▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░    ██▒▒▒ ░░ ▒░ ░░ ░▒ ▒  ░
-░░▒ ▒ ░ ▒ ░ ░  ░░░▒░ ░ ░ ░ ░▒  ░ ░░▒ ░      ▓██ ░▒░  ░ ░  ░  ░  ▒   
-░ ░ ░ ░ ░   ░    ░░░ ░ ░ ░  ░  ░  ░░        ▒ ▒ ░░     ░   ░        
-  ░ ░       ░  ░   ░           ░            ░ ░        ░  ░ ░      
-░                                           ░ ░                     
-EOF
-    echo -e "${NC}"  
-    echo -e "${GREEN}Version ${SCRIPT_VERSION} - By ZeuspyEC ~ https://github.com/zeuspyEC/${NC}\n"
+# Función para mostrar progreso
+show_progress() {
+    local current=$1
+    local total=$2
+    local width=50
+    local percent=$((current * 100 / total))
+    local filled=$((width * current / total))
+    local empty=$((width - filled))
+    
+    printf "\r${CYAN}[${BRIGHT_BLUE}"
+    printf "%${filled}s" '' | tr ' ' '█'
+    printf "${DIM}"
+    printf "%${empty}s" '' | tr ' ' '░'
+    printf "${RESET}${CYAN}]${RESET} ${BRIGHT_WHITE}%3d%%${RESET}" "$percent"
 }
 
-# Función para mostrar información del sistema
+# Función para imprimir información del sistema
 print_system_info() {
-    echo -e "${PURPLE}╔══════════════════════════════════════╗${NC}"
-    echo -e "${PURPLE}║      Información del Sistema         ║${NC}"
-    echo -e "${PURPLE}╚══════════════════════════════════════╝${NC}"
+    echo -e "${PURPLE}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${PURPLE}║      Información del Sistema         ║${RESET}"
+    echo -e "${PURPLE}╚══════════════════════════════════════╝${RESET}\n"
     
     # Kernel
-    printf "${WHITE}%-12s${NC} : %s\n" "Kernel" "$(uname -r)"
+    printf "${WHITE}%-12s${RESET} : %s\n" "Kernel" "$(uname -r)"
     
     # CPU
     local cpu_info
     cpu_info=$(grep "model name" /proc/cpuinfo | head -n1 | cut -d: -f2 | xargs)
-    printf "${WHITE}%-12s${NC} : %s\n" "CPU" "$cpu_info"
+    printf "${WHITE}%-12s${RESET} : %s\n" "CPU" "$cpu_info"
     
     # Memoria
-    echo -e "\n${WHITE}Memoria:${NC}"
+    echo -e "\n${WHITE}Memoria:${RESET}"
     free -h | awk '
-        NR==1 {printf "%-12s %-10s %-10s %-10s %-10s\n", $1, $2, $3, $4, $7}  
+        NR==1 {printf "%-12s %-10s %-10s %-10s %-10s\n", $1, $2, $3, $4, $7}
         NR==2 {printf "%-12s %-10s %-10s %-10s %-10s\n", $1":", $2, $3, $4, $7}
     ' | sed 's/^/  /'
     
     # Disco
-    echo -e "\n${WHITE}Disco:${NC}"
+    echo -e "\n${WHITE}Disco:${RESET}"
     df -h | grep -E '^/dev|^Filesystem' | \
-        awk '{printf "  %-20s %-10s %-10s %-10s %-10s %s\n", $1, $2, $3, $4, $5, $6}'    
+        awk '{printf "  %-20s %-10s %-10s %-10s %-10s %s\n", $1, $2, $3, $4, $5, $6}'
     
     # Red
-    echo -e "\n${WHITE}Red:${NC}"
+    echo -e "\n${WHITE}Red:${RESET}"
     ip -br addr | awk '{printf "  %-10s %-15s %s\n", $1, $2, $3}'
-    
-    echo -e "\n${PURPLE}══════════════════════════════════════${NC}\n"
-}
-
-# Función para verificar dependencias
-check_dependencies() {
-    log "INFO" "Verificando dependencias del sistema"
-    
-    local deps=(
-        "parted"
-        "mkfs.fat"
-        "mkfs.ext4"
-        "arch-chroot"
-        "iwctl"
-        "ping"
-        "locale-gen"
-    )
-    
-    local missing_deps=()
-    
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" >/dev/null 2>&1; then
-            missing_deps+=("$dep")
-        fi
-    done
-    
-    if ((${#missing_deps[@]} > 0)); then
-        echo -e "\n${ERROR}Faltan las siguientes dependencias:${NC}"
-        for dep in "${missing_deps[@]}"; do
-            echo -e "${ERROR}• $dep${NC}"
-        done
-        echo ""
-        return 1
-    fi
-    
-    log "SUCCESS" "Todas las dependencias están instaladas"
-    return 0
 }
 
 # Función para ejecutar comandos con logging
@@ -193,11 +218,11 @@ execute_with_log() {
     fi
 }
 
-# Función de inicialización del script
+# Función de inicialización
 init_script() {
     # Crear archivos de log
     : > "$LOG_FILE"
-    : > "$ERROR_LOG"  
+    : > "$ERROR_LOG"
     : > "$DEBUG_LOG"
     
     # Mostrar banner
@@ -209,62 +234,57 @@ init_script() {
         exit 1
     fi
     
+    # Mostrar información del sistema
+    print_system_info
+    
     # Verificar dependencias
     check_dependencies
     
-    # Mostrar información inicial
-    log "INFO" "Iniciando ZeuspyEC Arch Linux Installer v${SCRIPT_VERSION}"
-    print_system_info
+    log "INFO" "Inicialización completada"
 }
 
 # ==============================================================================
 # Funciones de Verificación del Sistema y Red
 # ==============================================================================
-verify_disk_space() {
-    local min_disk=$1
-    echo -ne "${CYAN}Verificando espacio en disco... ${NC}"
+
+check_dependencies() {
+    log "INFO" "Verificando dependencias del sistema"
     
-    local total_space
-    total_space=$(df -BG / | awk 'NR==2 {print $4}' | tr -d 'G')
+    local deps=(
+        "parted"
+        "mkfs.fat"
+        "mkfs.ext4"
+        "arch-chroot"
+        "iwctl"
+        "ping"
+        "reflector"
+        "git"
+        "curl"
+        "wget"
+    )
     
-    if ((total_space < min_disk)); then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Espacio insuficiente: ${total_space}GB < ${min_disk}GB"
+    local missing_deps=()
+    
+    for dep in "${deps[@]}"; do
+        echo -ne "${CYAN}Verificando $dep... ${RESET}"
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            echo -e "${RED}✘${RESET}"
+            missing_deps+=("$dep")
+        else
+            echo -e "${GREEN}✔${RESET}"
+        fi
+    done
+    
+    if ((${#missing_deps[@]} > 0)); then
+        echo -e "\n${ERROR}Dependencias faltantes:${RESET}"
+        for dep in "${missing_deps[@]}"; do
+            echo -e "${RED}• $dep${RESET}"
+        done
         return 1
     fi
-    echo -e "${GREEN}✔ ${total_space}GB${NC}"
+    
+    log "SUCCESS" "Todas las dependencias están instaladas"
     return 0
-}
-
-show_menu() {
-    local title=$1
-    shift
-    local options=("$@")
-    
-    echo -e "\n${PURPLE}$title${NC}"
-    for i in "${!options[@]}"; do
-        echo -e "${PRIMARY}$((i+1)). ${options[i]}${NC}"
-    done
-    echo
-}
-
-show_warning_message() {
-    echo -e "\n${WARNING}¡ADVERTENCIA!${NC}"
-    echo "Esta operación borrará TODOS los datos en el disco seleccionado."
-    echo -e "${WARNING}¿Está seguro que desea continuar? (s/N):${NC}"
-    read -r response
-    [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
-}
-
-show_progress() {
-    local current=$1
-    local total=$2
-    local percent=$((current * 100 / total))
-    local filled=$((percent / 2))
-    local empty=$((50 - filled))
-    
-    printf "\r${WHITE}Progreso: [%${filled}s%${empty}s] %d%%${NC}" \
-           "$(printf '%0.s=' {1..50})" "" "$percent"
 }
 
 check_system_requirements() {
@@ -289,79 +309,133 @@ check_system_requirements() {
     fi
     
     # Verificar arquitectura
+    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Verificación del Sistema         ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    
     local arch
     arch=$(uname -m)
-    echo -ne "\n${CYAN}Verificando arquitectura... ${NC}"
+    echo -ne "${WHITE}Arquitectura:${RESET} "
     if [[ "$arch" != "x86_64" ]]; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Arquitectura no soportada: $arch"
+        echo -e "${RED}✘ No soportada ($arch)${RESET}"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
+    echo -e "${GREEN}✔ x86_64${RESET}"
     
     # Verificar modo de arranque
-    echo -ne "${CYAN}Verificando modo de arranque... ${NC}"
+    echo -ne "${WHITE}Modo de arranque:${RESET} "
     if [[ -d "/sys/firmware/efi/efivars" ]]; then
         BOOT_MODE="UEFI"
-        echo -e "${GREEN}UEFI${NC}"
+        echo -e "${GREEN}✔ UEFI${RESET}"
     else
         BOOT_MODE="BIOS"
-        echo -e "${GREEN}BIOS${NC}"
+        echo -e "${YELLOW}➜ BIOS Legacy${RESET}"
     fi
     
     # Verificar memoria
-    echo -ne "${CYAN}Verificando memoria RAM... ${NC}"
+    echo -ne "${WHITE}Memoria RAM:${RESET} "
     local total_ram
     total_ram=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
     
     if ((total_ram < min_ram)); then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "RAM insuficiente: ${total_ram}MB < ${min_ram}MB"
+        echo -e "${RED}✘ Insuficiente (${total_ram}MB < ${min_ram}MB)${RESET}"
         return 1
     fi
-    echo -e "${GREEN}✔ ${total_ram}MB${NC}"
+    echo -e "${GREEN}✔ ${total_ram}MB${RESET}"
     
     # Verificar espacio en disco
-    if ! verify_disk_space "$min_disk"; then
-        return 1
-    fi
+    verify_disk_space "$min_disk"
     
     log "SUCCESS" "Sistema cumple con los requisitos mínimos"
     return 0
 }
 
+verify_disk_space() {
+    local min_disk=$1
+    echo -ne "${WHITE}Espacio en disco:${RESET} "
+    
+    local total_space
+    total_space=$(df -BG / | awk 'NR==2 {print $4}' | tr -d 'G')
+    
+    if ((total_space < min_disk)); then
+        echo -e "${RED}✘ Insuficiente (${total_space}GB < ${min_disk}GB)${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔ ${total_space}GB${RESET}"
+    return 0
+}
+
+configure_mirrorlist() {
+    log "INFO" "Configurando mirrors optimizados"
+    
+    # Backup del mirrorlist actual
+    cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.backup
+    
+    echo -e "${CYAN}Actualizando lista de mirrors...${RESET}"
+    
+    # Escribir nuevo mirrorlist personalizado
+    cat > /etc/pacman.d/mirrorlist << 'EOF'
+################################################################################
+# Arch Linux mirrorlist optimizado por ZeuspyEC
+################################################################################
+Server = https://mirror.osbeck.com/archlinux/$repo/os/$arch
+Server = https://de.arch.mirror.kescher.at/$repo/os/$arch
+Server = https://arch.mirror.constant.com/$repo/os/$arch
+Server = https://archlinux.thaller.ws/$repo/os/$arch
+Server = https://phinau.de/arch/$repo/os/$arch
+Server = https://mirror.cyberbits.asia/archlinux/$repo/os/$arch
+Server = https://mirror.pseudoform.org/$repo/os/$arch
+Server = https://mirror.pkgbuild.com/$repo/os/$arch
+Server = https://archlinux.uk.mirror.allworldit.com/archlinux/$repo/os/$arch
+Server = https://america.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://mirror.theash.xyz/arch/$repo/os/$arch
+Server = https://mirror.telepoint.bg/archlinux/$repo/os/$arch
+Server = https://archlinux.mailtunnel.eu/$repo/os/$arch
+Server = https://mirror.f4st.host/archlinux/$repo/os/$arch
+Server = https://mirror.lty.me/archlinux/$repo/os/$arch
+Server = https://mirror.chaoticum.net/arch/$repo/os/$arch
+Server = https://archmirror.it/repos/$repo/os/$arch
+Server = https://ftp.halifax.rwth-aachen.de/archlinux/$repo/os/$arch
+Server = https://arch.jensgutermuth.de/$repo/os/$arch
+Server = https://pkg.adfinis.com/archlinux/$repo/os/$arch
+EOF
+    
+    log "SUCCESS" "Mirrors configurados exitosamente"
+}
+
 check_network_connectivity() {
     log "INFO" "Verificando conectividad de red"
     
+    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Verificación de Red              ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    
     # Comprobar interfaces de red
-    echo -ne "${CYAN}Verificando interfaces de red... ${NC}"
+    echo -ne "${WHITE}Interfaces de red:${RESET} "
     if ! ip link show &>/dev/null; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "No se detectaron interfaces de red"
+        echo -e "${RED}✘ No detectadas${RESET}"
         return 1
     fi
-    echo -e "${GREEN}✔${NC}"
+    echo -e "${GREEN}✔ Detectadas${RESET}"
     
     local test_hosts=("archlinux.org" "google.com" "cloudflare.com")
     local connected=false
     
-    echo -e "\n${PURPLE}Probando conectividad:${NC}\n"
+    echo -e "\n${WHITE}Probando conectividad:${RESET}"
     
-    # Probar conexión a hosts conocidos
     for host in "${test_hosts[@]}"; do
-        echo -ne "${INFO}Probando conexión a $host... ${NC}"
+        echo -ne "  • $host... "
         if ping -c 1 -W 5 "$host" &>/dev/null; then
-            echo -e "${GREEN}✔${NC}"
+            echo -e "${GREEN}✔${RESET}"
             connected=true
             break
         else
-            echo -e "${ERROR}✘${NC}"
+            echo -e "${RED}✘${RESET}"
         fi
     done
     
-    # Si no hay conexión, intentar configurarla
     if ! $connected; then
-        log "WARN" "No hay conexión a Internet. Intentando configurar red..."
+        log "WARN" "Sin conexión a Internet. Intentando configurar..."
         setup_network_connection
         return $?
     fi
@@ -373,24 +447,33 @@ check_network_connectivity() {
 setup_network_connection() {
     log "INFO" "Configurando conexión de red"
     
-    show_menu "Tipo de Conexión" \
-        "Conexión Wi-Fi" \
-        "Conexión Ethernet" \
-        "Salir"
-        
-    local option
-    read -r option
+    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Configuración de Red             ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
     
-    case $option in
-        1) setup_wifi_connection ;;
-        2) setup_ethernet_connection ;;
-        3) return 1 ;;
-        *) log "ERROR" "Opción inválida"; return 1 ;;
-    esac
+    PS3=$'\n'"${YELLOW}Seleccione tipo de conexión (1-3):${RESET} "
+    select connection_type in "WiFi" "Ethernet" "Cancelar"; do
+        case $connection_type in
+            "WiFi")
+                setup_wifi_connection
+                break
+                ;;
+            "Ethernet")
+                setup_ethernet_connection
+                break
+                ;;
+            "Cancelar")
+                return 1
+                ;;
+            *)
+                echo -e "${RED}Opción inválida${RESET}"
+                ;;
+        esac
+    done
 }
 
 setup_wifi_connection() {
-    log "INFO" "Configurando conexión Wi-Fi"
+    log "INFO" "Configurando conexión WiFi"
     
     # Verificar soporte wifi
     if ! command -v iwctl &>/dev/null; then
@@ -408,14 +491,14 @@ setup_wifi_connection() {
     fi
     
     # Mostrar interfaces disponibles
-    echo -e "\n${PURPLE}Interfaces Wi-Fi disponibles:${NC}\n"
-    for i in "${!wireless_interfaces[@]}"; do
-        echo -e "${PRIMARY}$((i+1)). ${wireless_interfaces[$i]}${NC}"
+    echo -e "\n${WHITE}Interfaces WiFi disponibles:${RESET}"
+    local i=1
+    for interface in "${wireless_interfaces[@]}"; do
+        echo -e "  ${CYAN}$i)${RESET} $interface"
+        ((i++))
     done
     
-    # Seleccionar interfaz
-    echo -e "\n${YELLOW}Seleccione una interfaz (1-${#wireless_interfaces[@]}): ${NC}"
-    local interface_number
+    echo -ne "\n${YELLOW}Seleccione interfaz (1-${#wireless_interfaces[@]}):${RESET} "
     read -r interface_number
     
     if ! [[ "$interface_number" =~ ^[0-9]+$ ]] || \
@@ -426,139 +509,83 @@ setup_wifi_connection() {
     
     local selected_interface=${wireless_interfaces[$((interface_number-1))]}
     
-    # Escanear y mostrar redes
-    log "INFO" "Escaneando redes disponibles..."
+    # Escanear redes
+    echo -e "\n${CYAN}Escaneando redes disponibles...${RESET}"
     iwctl station "$selected_interface" scan
     sleep 2
     
-    echo -e "\n${PURPLE}Redes disponibles:${NC}\n"
+    # Mostrar redes
+    echo -e "\n${WHITE}Redes disponibles:${RESET}"
     iwctl station "$selected_interface" get-networks
     
     # Solicitar datos de conexión
-    echo -e "\n${YELLOW}Ingrese el nombre de la red (SSID): ${NC}"
-    local ssid
+    echo -ne "\n${YELLOW}SSID de la red:${RESET} "
     read -r ssid
     
-    echo -e "${YELLOW}Ingrese la contraseña: ${NC}"
-    local password
+    echo -ne "${YELLOW}Contraseña:${RESET} "
     read -rs password
+    echo
     
     # Intentar conexión
-    echo -e "\n${CYAN}Conectando a $ssid...${NC}"
+    echo -e "\n${CYAN}Conectando a $ssid...${RESET}"
     
     if iwctl station "$selected_interface" connect "$ssid" --passphrase "$password"; then
         sleep 3
-        # Verificar conexión
         if ping -c 1 archlinux.org &>/dev/null; then
-            log "SUCCESS" "Conexión Wi-Fi establecida exitosamente"
+            log "SUCCESS" "Conexión WiFi establecida"
             return 0
         fi
     fi
     
-    log "ERROR" "No se pudo establecer la conexión Wi-Fi"
+    log "ERROR" "No se pudo establecer la conexión WiFi"
     return 1
 }
 
 setup_ethernet_connection() {
-    log "INFO" "Configurando conexión ethernet"
+    log "INFO" "Configurando conexión Ethernet"
     
-    # Obtener interfaces ethernet
     local ethernet_interfaces
-    ethernet_interfaces=($(ip -br addr show | grep -E "^[0-9]+: en|^[0-9]+: eth" | cut -d: -f2))
+    ethernet_interfaces=($(ip link show | grep -E "^[0-9]+: en|^[0-9]+: eth" | cut -d: -f2))
     
     if ((${#ethernet_interfaces[@]} == 0)); then
-        log "ERROR" "No se detectaron interfaces ethernet"
+        log "ERROR" "No se detectaron interfaces Ethernet"
         return 1
     fi
     
-    echo -e "\n${PURPLE}Interfaces Ethernet disponibles:${NC}\n"
+    echo -e "\n${WHITE}Configurando interfaces Ethernet:${RESET}"
     
-    # Intentar configurar cada interfaz
     for interface in "${ethernet_interfaces[@]}"; do
         interface=$(echo "$interface" | tr -d ' ')
-        echo -ne "${CYAN}Configurando $interface... ${NC}"
+        echo -ne "  • $interface... "
         
-        # Activar interfaz
         ip link set "$interface" up
-        
-        # Intentar DHCP
-        if dhcpcd "$interface"; then
+        if dhcpcd "$interface" &>/dev/null; then
             sleep 3
             if ping -c 1 archlinux.org &>/dev/null; then
-                echo -e "${GREEN}✔${NC}"
-                log "SUCCESS" "Conexión ethernet establecida en $interface"
+                echo -e "${GREEN}✔${RESET}"
+                log "SUCCESS" "Conexión Ethernet establecida en $interface"
                 return 0
             fi
         fi
-        echo -e "${ERROR}✘${NC}"
+        echo -e "${RED}✘${RESET}"
     done
     
-    log "ERROR" "No se pudo establecer conexión ethernet"
+    log "ERROR" "No se pudo establecer conexión Ethernet"
     return 1
 }
 
-# Función auxiliar para verificar paquetes de red
-verify_network_tools() {
-    local network_tools=(
-        "dhcpcd"
-        "iwd"
-        "wpa_supplicant"
-        "networkmanager"
-    )
-    
-    for tool in "${network_tools[@]}"; do
-        if ! pacman -Q "$tool" &>/dev/null; then
-            log "WARN" "Herramienta de red $tool no está instalada"
-            
-            echo -e "${YELLOW}¿Desea instalar $tool? (s/N):${NC}"
-            local response
-            read -r response
-            
-            if [[ "$response" =~ ^[Ss]$ ]]; then
-                if ! pacman -S --noconfirm "$tool"; then
-                    log "ERROR" "No se pudo instalar $tool"
-                    continue
-                fi
-            fi
-        fi
-    done
-}
-
-# Verificar servicios de red
-verify_network_services() {
-    local services=(
-        "NetworkManager"
-        "dhcpcd"
-        "iwd"
-    )
-    
-    for service in "${services[@]}"; do
-        if systemctl is-enabled "$service" &>/dev/null; then
-            log "INFO" "Servicio $service está habilitado"
-        else
-            log "WARN" "Servicio $service no está habilitado"
-            
-            echo -e "${YELLOW}¿Desea habilitar $service? (s/N):${NC}"
-            local response
-            read -r response
-            
-            if [[ "$response" =~ ^[Ss]$ ]]; then
-                if ! systemctl enable --now "$service"; then
-                    log "ERROR" "No se pudo habilitar $service"
-                fi
-            fi
-        fi
-    done
-}
-
 # ==============================================================================
-# Funciones de Particionamiento
+# Funciones de Particionamiento y Formateo
 # ==============================================================================
 
 prepare_disk() {
     log "INFO" "Preparando disco para instalación"
     
-    # Listar discos disponibles con información detallada
+    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Configuración de Discos         ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    
+    # Listar discos disponibles
     local available_disks
     available_disks=($(lsblk -dpno NAME,SIZE,TYPE,MODEL | grep disk || echo ""))
     
@@ -567,34 +594,30 @@ prepare_disk() {
         return 1
     fi
     
-    echo -e "\n${PURPLE}Discos disponibles:${NC}\n"
-    printf '%s\n' "${available_disks[@]}" | nl
-    
-    # Análisis detallado de cada disco
-    echo -e "\n${PURPLE}Análisis detallado de discos:${NC}\n"
+    # Mostrar información detallada de discos
+    echo -e "${WHITE}Discos disponibles:${RESET}\n"
+    local i=1
     for disk in "${available_disks[@]}"; do
         local disk_name=$(echo "$disk" | cut -d' ' -f1)
-        echo -e "${CYAN}=== Analizando $disk_name ===${NC}"
-        
-        # Mostrar información detallada
-        echo -e "${WHITE}Información del disco:${NC}"
-        fdisk -l "$disk_name" 2>/dev/null | grep -E "Disk|Device|Dispositivo" || true
+        echo -e "${CYAN}$i) Disco: $disk_name${RESET}"
+        echo -e "   $(echo "$disk" | cut -d' ' -f2-)"
         
         # Mostrar particiones actuales
-        echo -e "\n${WHITE}Particiones actuales:${NC}"
-        lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE "$disk_name"
+        echo -e "\n   ${WHITE}Particiones actuales:${RESET}"
+        lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE "$disk_name" | sed 's/^/   /'
         
-        # Verificar sistemas operativos existentes
+        # Buscar sistemas operativos existentes
         if command -v os-prober &>/dev/null; then
-            echo -e "\n${WHITE}Sistemas operativos detectados:${NC}"
-            os-prober | grep "$disk_name" || echo "Ninguno detectado"
+            echo -e "\n   ${WHITE}Sistemas operativos detectados:${RESET}"
+            os-prober | grep "$disk_name" | sed 's/^/   /' || echo "   Ninguno detectado"
         fi
-        echo -e "${CYAN}================================${NC}\n"
+        echo
+        ((i++))
     done
     
     # Selección de disco
     while true; do
-        echo -e "\n${YELLOW}Seleccione el número del disco para la instalación:${NC}"
+        echo -ne "\n${YELLOW}Seleccione el número del disco para la instalación (1-${#available_disks[@]}):${RESET} "
         read -r disk_number
         
         if [[ $disk_number =~ ^[0-9]+$ ]] && \
@@ -602,18 +625,18 @@ prepare_disk() {
             TARGET_DISK=$(echo "${available_disks[$((disk_number-1))]}" | cut -d' ' -f1)
             break
         fi
-        log "WARN" "Selección inválida, intente nuevamente"
+        echo -e "${RED}Selección inválida${RESET}"
     done
     
     # Mostrar opciones de particionamiento
-    echo -e "\n${PURPLE}Opciones de particionamiento:${NC}"
+    echo -e "\n${WHITE}Opciones de particionamiento:${RESET}"
     select option in \
-        "Usar disco completo (automático)" \
-        "Gestionar particiones manualmente" \
+        "Automático (usar disco completo)" \
+        "Manual (particionamiento personalizado)" \
         "Usar particiones existentes" \
         "Cancelar"; do
         case $option in
-            "Usar disco completo (automático)")
+            "Automático (usar disco completo)")
                 show_warning_message
                 if [[ $? -eq 0 ]]; then
                     if [[ "$BOOT_MODE" == "UEFI" ]]; then
@@ -624,7 +647,7 @@ prepare_disk() {
                 fi
                 break
                 ;;
-            "Gestionar particiones manualmente")
+            "Manual (particionamiento personalizado)")
                 manage_partitions_manually
                 break
                 ;;
@@ -644,19 +667,197 @@ prepare_disk() {
     return $?
 }
 
-manage_partitions_manually() {
-    log "INFO" "Iniciando gestión manual de particiones"
+show_warning_message() {
+    echo -e "\n${RED}╔═══════════════════════════ ADVERTENCIA ═══════════════════════════╗${RESET}"
+    echo -e "${RED}║  ¡ATENCIÓN! Se borrarán TODOS los datos en el disco seleccionado  ║${RESET}"
+    echo -e "${RED}║  Esta operación no se puede deshacer                              ║${RESET}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════════════╝${RESET}"
     
-    # Mostrar estado actual del disco
-    echo -e "\n${CYAN}Estado actual del disco:${NC}"
+    echo -ne "\n${YELLOW}¿Está seguro que desea continuar? (s/N):${RESET} "
+    read -r response
+    [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
+}
+
+create_uefi_partitions() {
+    log "INFO" "Creando particiones UEFI"
+    
+    # Calcular tamaños
+    local disk_size
+    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+    local efi_size=512
+    local swap_size
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    local root_size=$((disk_size - efi_size - swap_size))
+    
+    # Crear tabla GPT
+    echo -e "\n${CYAN}Creando tabla de particiones GPT...${RESET}"
+    if ! parted -s "$TARGET_DISK" mklabel gpt; then
+        log "ERROR" "Fallo al crear tabla GPT"
+        return 1
+    fi
+    
+    # Crear particiones
+    echo -e "${CYAN}Creando particiones...${RESET}"
+    if ! parted -s "$TARGET_DISK" \
+        mkpart ESP fat32 1MiB "${efi_size}MiB" \
+        set 1 esp on \
+        mkpart primary ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
+        mkpart primary linux-swap "$((efi_size + root_size))MiB" 100%; then
+        log "ERROR" "Fallo al crear particiones UEFI"
+        return 1
+    fi
+    
+    sleep 2  # Esperar a que el kernel detecte las nuevas particiones
+    
+    # Formatear particiones
+    local efi_part="${TARGET_DISK}1"
+    local root_part="${TARGET_DISK}2"
+    local swap_part="${TARGET_DISK}3"
+    
+    echo -e "${CYAN}Formateando particiones...${RESET}"
+    echo -ne "  EFI (${efi_part})... "
+    if ! mkfs.fat -F32 "$efi_part"; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición EFI"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    echo -ne "  ROOT (${root_part})... "
+    if ! mkfs.ext4 -F "$root_part"; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición ROOT"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    echo -ne "  SWAP (${swap_part})... "
+    if ! mkswap "$swap_part" || ! swapon "$swap_part"; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al configurar SWAP"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    # Montar particiones
+    echo -e "\n${CYAN}Montando particiones...${RESET}"
+    
+    echo -ne "  Montando ROOT... "
+    if ! mount "$root_part" /mnt; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar ROOT"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    echo -ne "  Creando y montando EFI... "
+    if ! mkdir -p /mnt/boot/efi || ! mount "$efi_part" /mnt/boot/efi; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar EFI"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    log "SUCCESS" "Particionamiento UEFI completado exitosamente"
+    return 0
+}
+
+create_bios_partitions() {
+    log "INFO" "Creando particiones BIOS"
+    
+    # Calcular tamaños
+    local disk_size
+    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+    local boot_size=512
+    local swap_size
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
+    local root_size=$((disk_size - boot_size - swap_size))
+    
+    # Crear tabla MBR
+    echo -e "\n${CYAN}Creando tabla de particiones MBR...${RESET}"
+    if ! parted -s "$TARGET_DISK" mklabel msdos; then
+        log "ERROR" "Fallo al crear tabla MBR"
+        return 1
+    fi
+    
+    # Crear particiones
+    echo -e "${CYAN}Creando particiones...${RESET}"
+    if ! parted -s "$TARGET_DISK" \
+        mkpart primary ext4 1MiB "${boot_size}MiB" \
+        set 1 boot on \
+        mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
+        mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%; then
+        log "ERROR" "Fallo al crear particiones BIOS"
+        return 1
+    fi
+    
+    sleep 2  # Esperar a que el kernel detecte las nuevas particiones
+    
+    # Formatear particiones
+    local boot_part="${TARGET_DISK}1"
+    local root_part="${TARGET_DISK}2"
+    local swap_part="${TARGET_DISK}3"
+    
+    echo -e "${CYAN}Formateando particiones...${RESET}"
+    echo -ne "  BOOT (${boot_part})... "
+    if ! mkfs.ext4 -F "$boot_part"; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición BOOT"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    echo -ne "  ROOT (${root_part})... "
+    if ! mkfs.ext4 -F "$root_part"; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición ROOT"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    echo -ne "  SWAP (${swap_part})... "
+    if ! mkswap "$swap_part" || ! swapon "$swap_part"; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al configurar SWAP"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    # Montar particiones
+    echo -e "\n${CYAN}Montando particiones...${RESET}"
+    
+    echo -ne "  Montando ROOT... "
+    if ! mount "$root_part" /mnt; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar ROOT"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    echo -ne "  Creando y montando BOOT... "
+    if ! mkdir -p /mnt/boot || ! mount "$boot_part" /mnt/boot; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar BOOT"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    log "SUCCESS" "Particionamiento BIOS completado exitosamente"
+    return 0
+}
+
+manage_partitions_manually() {
+    log "INFO" "Iniciando particionamiento manual"
+    
+    echo -e "\n${CYAN}Estado actual del disco:${RESET}"
     fdisk -l "$TARGET_DISK"
     
-    # Ofrecer crear nueva tabla de particiones
-    echo -e "\n${YELLOW}¿Desea crear una nueva tabla de particiones? (s/N):${NC}"
+    echo -e "\n${YELLOW}¿Desea crear una nueva tabla de particiones? (s/N):${RESET}"
     read -r create_new
     
     if [[ "$create_new" =~ ^[Ss]$ ]]; then
-        echo -e "\n${YELLOW}Seleccione el tipo de tabla de particiones:${NC}"
+        # Seleccionar tipo de tabla
+        echo -e "\n${WHITE}Seleccione el tipo de tabla de particiones:${RESET}"
         select table in "GPT (recomendado para UEFI)" "MBR (para BIOS legacy)" "Cancelar"; do
             case $table in
                 "GPT (recomendado para UEFI)")
@@ -680,30 +881,33 @@ manage_partitions_manually() {
         done
     fi
     
-    # Lanzar herramienta de particionamiento
-    echo -e "\n${CYAN}Iniciando herramienta de particionamiento...${NC}"
-    echo -e "${YELLOW}Use cfdisk para crear las siguientes particiones:${NC}"
+    # Mostrar instrucciones de particionamiento
+    echo -e "\n${CYAN}Iniciando herramienta de particionamiento cfdisk...${RESET}"
+    echo -e "${WHITE}Cree las siguientes particiones:${RESET}"
+    
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -e "- Partición EFI    (512MB, tipo EFI System)"
-        echo -e "- Partición ROOT   (resto del espacio, tipo Linux filesystem)"
-        echo -e "- Partición SWAP   (opcional, tipo Linux swap)"
+        echo -e "  • ${CYAN}EFI:${RESET}  512MB, tipo 'EFI System'"
+        echo -e "  • ${CYAN}ROOT:${RESET} Resto del espacio, tipo 'Linux filesystem'"
+        echo -e "  • ${CYAN}SWAP:${RESET} (Opcional) Igual a RAM, tipo 'Linux swap'"
     else
-        echo -e "- Partición BOOT   (512MB, tipo Linux filesystem)"
-        echo -e "- Partición ROOT   (resto del espacio, tipo Linux filesystem)"
-        echo -e "- Partición SWAP   (opcional, tipo Linux swap)"
+        echo -e "  • ${CYAN}BOOT:${RESET} 512MB, tipo 'Linux filesystem'"
+        echo -e "  • ${CYAN}ROOT:${RESET} Resto del espacio, tipo 'Linux filesystem'"
+        echo -e "  • ${CYAN}SWAP:${RESET} (Opcional) Igual a RAM, tipo 'Linux swap'"
     fi
     
-    read -p "Presione Enter para continuar..."
+    echo -e "\nPresione ${GREEN}[Enter]${RESET} para continuar..."
+    read -r
+    
     if ! cfdisk "$TARGET_DISK"; then
         log "ERROR" "Error al ejecutar cfdisk"
         return 1
     fi
     
-    # Mostrar particiones creadas
-    echo -e "\n${CYAN}Particiones creadas:${NC}"
+    # Mostrar resultado
+    echo -e "\n${CYAN}Particiones creadas:${RESET}"
     lsblk "$TARGET_DISK"
     
-    # Seleccionar particiones
+    # Seleccionar y formatear particiones
     select_and_format_partitions
     return $?
 }
@@ -713,41 +917,49 @@ select_and_format_partitions() {
     local boot_part=""
     local swap_part=""
     
-    # Seleccionar particiones
+    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Selección de Particiones        ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    
+    # Seleccionar partición ROOT
     while [[ ! -b "$root_part" ]]; do
-        echo -e "\n${YELLOW}Ingrese la partición para ROOT (ejemplo: ${TARGET_DISK}1):${NC}"
+        echo -e "${WHITE}Particiones disponibles:${RESET}"
+        lsblk -o NAME,SIZE,TYPE,FSTYPE "$TARGET_DISK"
+        echo -ne "\n${YELLOW}Ingrese la partición para ROOT (ejemplo: ${TARGET_DISK}1):${RESET} "
         read -r root_part
         if [[ ! -b "$root_part" ]]; then
-            echo -e "${ERROR}Partición inválida${NC}"
+            echo -e "${RED}Error: Partición inválida${RESET}"
         fi
     done
     
+    # Seleccionar partición BOOT/EFI
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
         while [[ ! -b "$boot_part" ]]; do
-            echo -e "${YELLOW}Ingrese la partición para EFI (ejemplo: ${TARGET_DISK}2):${NC}"
+            echo -ne "\n${YELLOW}Ingrese la partición para EFI (ejemplo: ${TARGET_DISK}2):${RESET} "
             read -r boot_part
             if [[ ! -b "$boot_part" ]]; then
-                echo -e "${ERROR}Partición inválida${NC}"
+                echo -e "${RED}Error: Partición inválida${RESET}"
             fi
         done
     else
         while [[ ! -b "$boot_part" ]]; do
-            echo -e "${YELLOW}Ingrese la partición para BOOT (ejemplo: ${TARGET_DISK}2):${NC}"
+            echo -ne "\n${YELLOW}Ingrese la partición para BOOT (ejemplo: ${TARGET_DISK}2):${RESET} "
             read -r boot_part
             if [[ ! -b "$boot_part" ]]; then
-                echo -e "${ERROR}Partición inválida${NC}"
+                echo -e "${RED}Error: Partición inválida${RESET}"
             fi
         done
     fi
     
-    echo -e "${YELLOW}¿Desea configurar una partición SWAP? (s/N):${NC}"
+    # Seleccionar partición SWAP (opcional)
+    echo -ne "\n${YELLOW}¿Desea configurar una partición SWAP? (s/N):${RESET} "
     read -r use_swap
     if [[ "$use_swap" =~ ^[Ss]$ ]]; then
         while [[ ! -b "$swap_part" ]]; do
-            echo -e "${YELLOW}Ingrese la partición para SWAP (ejemplo: ${TARGET_DISK}3):${NC}"
+            echo -ne "${YELLOW}Ingrese la partición para SWAP (ejemplo: ${TARGET_DISK}3):${RESET} "
             read -r swap_part
             if [[ ! -b "$swap_part" ]]; then
-                echo -e "${ERROR}Partición inválida${NC}"
+                echo -e "${RED}Error: Partición inválida${RESET}"
             fi
         done
     fi
@@ -757,344 +969,274 @@ select_and_format_partitions() {
     return $?
 }
 
-use_existing_partitions() {
-    log "INFO" "Usando particiones existentes"
-    
-    # Mostrar particiones disponibles
-    echo -e "\n${CYAN}Particiones disponibles:${NC}"
-    lsblk "$TARGET_DISK" -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
-    
-    # Seleccionar y montar particiones existentes
-    select_and_mount_existing_partitions
-    return $?
-}
-
-select_and_mount_existing_partitions() {
-    local root_part=""
-    local boot_part=""
-    local swap_part=""
-    
-    # Seleccionar partición ROOT
-    while [[ ! -b "$root_part" ]]; do
-        echo -e "\n${YELLOW}Ingrese la partición ROOT existente:${NC}"
-        read -r root_part
-        if [[ ! -b "$root_part" ]]; then
-            echo -e "${ERROR}Partición inválida${NC}"
-        fi
-    done
-    
-    # Seleccionar partición BOOT/EFI
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        while [[ ! -b "$boot_part" ]]; do
-            echo -e "${YELLOW}Ingrese la partición EFI existente:${NC}"
-            read -r boot_part
-            if [[ ! -b "$boot_part" ]]; then
-                echo -e "${ERROR}Partición inválida${NC}"
-            fi
-        done
-    else
-        while [[ ! -b "$boot_part" ]]; do
-            echo -e "${YELLOW}Ingrese la partición BOOT existente:${NC}"
-            read -r boot_part
-            if [[ ! -b "$boot_part" ]]; then
-                echo -e "${ERROR}Partición inválida${NC}"
-            fi
-        done
-    fi
-    
-    # Opcionalmente seleccionar SWAP
-    echo -e "${YELLOW}¿Desea usar una partición SWAP existente? (s/N):${NC}"
-    read -r use_swap
-    if [[ "$use_swap" =~ ^[Ss]$ ]]; then
-        while [[ ! -b "$swap_part" ]]; do
-            echo -e "${YELLOW}Ingrese la partición SWAP existente:${NC}"
-            read -r swap_part
-            if [[ ! -b "$swap_part" ]]; then
-                echo -e "${ERROR}Partición inválida${NC}"
-            fi
-        done
-    fi
-    
-    # Preguntar si desea formatear las particiones
-    echo -e "\n${YELLOW}¿Desea formatear las particiones? (s/N):${NC}"
-    read -r should_format
-    
-    if [[ "$should_format" =~ ^[Ss]$ ]]; then
-        format_and_mount_partitions "$root_part" "$boot_part" "$swap_part"
-    else
-        mount_existing_partitions "$root_part" "$boot_part" "$swap_part"
-    fi
-    return $?
-}
-
-mount_existing_partitions() {
+format_and_mount_partitions() {
     local root_part="$1"
     local boot_part="$2"
     local swap_part="$3"
     
-    # Montar ROOT
+    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Formato de Particiones         ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    
+    # Formatear ROOT
+    echo -ne "${WHITE}Formateando ROOT (${root_part})...${RESET} "
+    if ! mkfs.ext4 -F "$root_part"; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Error al formatear partición ROOT"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    # Formatear BOOT/EFI
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -ne "${WHITE}Formateando EFI (${boot_part})...${RESET} "
+        if ! mkfs.fat -F32 "$boot_part"; then
+            echo -e "${RED}✘${RESET}"
+            log "ERROR" "Error al formatear partición EFI"
+            return 1
+        fi
+    else
+        echo -ne "${WHITE}Formateando BOOT (${boot_part})...${RESET} "
+        if ! mkfs.ext4 -F "$boot_part"; then
+            echo -e "${RED}✘${RESET}"
+            log "ERROR" "Error al formatear partición BOOT"
+            return 1
+        fi
+    fi
+    echo -e "${GREEN}✔${RESET}"
+    
+    # Formatear SWAP si existe
+    if [[ -n "$swap_part" ]]; then
+        echo -ne "${WHITE}Formateando SWAP (${swap_part})...${RESET} "
+        if ! mkswap "$swap_part" || ! swapon "$swap_part"; then
+            echo -e "${RED}✘${RESET}"
+            log "ERROR" "Error al formatear/activar SWAP"
+            return 1
+        fi
+        echo -e "${GREEN}✔${RESET}"
+    fi
+    
+    # Montar particiones
+    echo -e "\n${CYAN}Montando particiones...${RESET}"
+    
+    echo -ne "${WHITE}Montando ROOT...${RESET} "
     if ! mount "$root_part" /mnt; then
+        echo -e "${RED}✘${RESET}"
         log "ERROR" "Error al montar partición ROOT"
         return 1
     fi
+    echo -e "${GREEN}✔${RESET}"
     
-    # Montar BOOT/EFI
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -ne "${WHITE}Montando EFI...${RESET} "
         mkdir -p /mnt/boot/efi
         if ! mount "$boot_part" /mnt/boot/efi; then
+            echo -e "${RED}✘${RESET}"
             log "ERROR" "Error al montar partición EFI"
             return 1
         fi
     else
+        echo -ne "${WHITE}Montando BOOT...${RESET} "
         mkdir -p /mnt/boot
         if ! mount "$boot_part" /mnt/boot; then
+            echo -e "${RED}✘${RESET}"
             log "ERROR" "Error al montar partición BOOT"
             return 1
         fi
     fi
+    echo -e "${GREEN}✔${RESET}"
     
-    # Activar SWAP si existe
-    if [[ -n "$swap_part" ]]; then
-        if ! swapon "$swap_part"; then
-            log "ERROR" "Error al activar SWAP"
-            return 1
-        fi
+    log "SUCCESS" "Particiones formateadas y montadas correctamente"
+    return 0
+}
+
+verify_partitions() {
+    log "INFO" "Verificando particiones"
+    
+    echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Verificación de Particiones     ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${RESET}\n"
+    
+    # Verificar puntos de montaje
+    local mount_points=(
+        "/mnt"
+        "/mnt/boot"
+    )
+    
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        mount_points+=("/mnt/boot/efi")
     fi
     
-    log "SUCCESS" "Particiones montadas correctamente"
+    local all_mounted=true
+    for point in "${mount_points[@]}"; do
+        echo -ne "${WHITE}Verificando $point...${RESET} "
+        if ! mountpoint -q "$point"; then
+            echo -e "${RED}✘ No montado${RESET}"
+            all_mounted=false
+        else
+            echo -e "${GREEN}✔${RESET}"
+        fi
+    done
+    
+    if ! $all_mounted; then
+        log "ERROR" "No todos los puntos de montaje están configurados"
+        return 1
+    fi
+    
+    # Mostrar estructura final
+    echo -e "\n${WHITE}Estructura final de particiones:${RESET}"
+    lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E '^|/mnt' | sed 's/^/  /'
+    
+    log "SUCCESS" "Verificación de particiones completada"
     return 0
 }
 
 # ==============================================================================
-# Funciones de Instalación Base y Configuración del Sistema
+# Funciones de Instalación Base
 # ==============================================================================
-
-# Paquetes requeridos para la instalación
-declare -g REQUIRED_PACKAGES=(
-    # Sistema base
-    "base"
-    "base-devel"
-    "linux"
-    "linux-firmware"
-    
-    # Red
-    "networkmanager"
-    "wpa_supplicant"
-    "wireless_tools"
-    "netctl"
-    
-    # Bootloader y utilidades
-    "grub"
-    "efibootmgr"
-    "os-prober"
-    
-    # Herramientas básicas
-    "sudo"
-    "vim" 
-    "nano"
-    "git"
-    "wget"
-    "curl"
-    
-    # Utilidades del sistema
-    "bash-completion"
-    "man-db"
-    "man-pages"
-    "zip"
-    "unzip"
-    "htop"
-)
 
 install_base_system() {
     log "INFO" "Iniciando instalación del sistema base"
     
-    # Actualizar mirrors antes de la instalación
-    if ! update_mirrors; then
-        log "WARN" "No se pudieron actualizar los mirrors, continuando con la lista predeterminada"
-    fi
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Instalación del Sistema Base      ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
     
-    # Instalar sistema base
-    echo -e "\n${PURPLE}Instalando paquetes base:${NC}\n"
-    local total_packages=${#REQUIRED_PACKAGES[@]}
+    # Array de funciones de instalación
+    local install_steps=(
+        "install_essential_packages"
+        "generate_fstab"
+        "configure_system_base"
+        "configure_bootloader"
+    )
+    
+    # Ejecutar pasos de instalación
+    local total_steps=${#install_steps[@]}
     local current=0
     
-    # Crear array de paquetes a instalar
-    local packages_to_install=()
-    for package in "${REQUIRED_PACKAGES[@]}"; do
+    for step in "${install_steps[@]}"; do
         ((current++))
-        echo -ne "${CYAN}Verificando $package... ${NC}"
-        
-        # Verificar si el paquete ya está instalado
-        if pacman -Q "$package" &>/dev/null; then
-            echo -e "${GREEN}✔ (ya instalado)${NC}"
-        else
-            echo -e "${YELLOW}➜ (pendiente)${NC}"
-            packages_to_install+=("$package")
-        fi
-        
-        show_progress "$current" "$total_packages"
-        echo
-    done
-    
-    # Instalar paquetes pendientes
-    if ((${#packages_to_install[@]} > 0)); then
-        echo -e "\n${CYAN}Instalando ${#packages_to_install[@]} paquetes...${NC}"
-        if ! pacstrap /mnt "${packages_to_install[@]}"; then
-            log "ERROR" "Fallo al instalar paquetes base"
+        echo -e "\n${WHITE}[$current/$total_steps] Ejecutando: ${step//_/ }${RESET}"
+        if ! $step; then
+            log "ERROR" "Fallo en: $step"
             return 1
         fi
-    else
-        log "INFO" "Todos los paquetes base ya están instalados"
-    fi
+        show_progress "$current" "$total_steps"
+    done
     
-    # Generar fstab
-    echo -ne "\n${CYAN}Generando fstab... ${NC}"
-    if ! genfstab -U /mnt >> /mnt/etc/fstab; then
-        echo -e "${ERROR}✘${NC}"
-        log "ERROR" "Fallo al generar fstab"
-        return 1
-    fi
-    echo -e "${GREEN}✔${NC}"
-    
-    # Verificar fstab
-    if ! grep -q "UUID" /mnt/etc/fstab; then
-        log "ERROR" "fstab generado incorrectamente"
-        return 1
-    fi
-    
-    log "SUCCESS" "Sistema base instalado correctamente"
     return 0
 }
 
-update_mirrors() {
-    log "INFO" "Actualizando lista de mirrors"
+install_essential_packages() {
+    log "INFO" "Instalando paquetes esenciales"
     
-    # Respaldar mirrorlist actual
-    cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.backup
-    
-    # Instalar reflector si no está presente
-    if ! command -v reflector &>/dev/null; then
-        echo -e "${YELLOW}Instalando reflector...${NC}"
-        if ! pacman -Sy --noconfirm reflector; then
-            log "WARN" "No se pudo instalar reflector"
-            return 1
-        fi
-    fi
-    
-    # Configurar mejores mirrors
-    echo -e "${CYAN}Actualizando mirrors con reflector...${NC}"
-    if ! reflector --latest 20 \
-                  --protocol https \
-                  --sort rate \
-                  --country Spain,France,Germany,Italy \
-                  --save /etc/pacman.d/mirrorlist; then
-        log "WARN" "Fallo al actualizar mirrors con reflector"
+    # Verificar conexión antes de instalar
+    if ! ping -c 1 archlinux.org &>/dev/null; then
+        log "ERROR" "Sin conexión a Internet"
         return 1
     fi
     
     # Actualizar base de datos de pacman
+    echo -e "${CYAN}Actualizando base de datos de pacman...${RESET}"
     if ! pacman -Sy; then
-        log "WARN" "Fallo al actualizar base de datos de pacman"
+        log "ERROR" "Fallo al actualizar base de datos de pacman"
         return 1
     fi
     
-    log "SUCCESS" "Mirrors actualizados correctamente"
-    return 0
-}
-
-configure_system() {
-    log "INFO" "Iniciando configuración del sistema"
-    
-    local config_functions=(
-        "configure_hostname"
-        "configure_timezone"
-        "configure_locale"
-        "configure_users"
-        "configure_network"
-        "configure_bootloader"
-        "configure_pacman"
-        "configure_services"
+    # Lista completa de paquetes
+    local packages=(
+        # Sistema base
+        "${BASE_PACKAGES[@]}"
+        
+        # Utilidades básicas
+        "bash-completion"
+        "man-db"
+        "man-pages"
+        "texinfo"
+        "nano"
+        "vim"
+        "wget"
+        "curl"
+        
+        # Red
+        "networkmanager"
+        "network-manager-applet"
+        "wpa_supplicant"
+        "dialog"
+        "dhcpcd"
+        
+        # Audio
+        "pulseaudio"
+        "pulseaudio-alsa"
+        "alsa-utils"
+        
+        # Otros
+        "reflector"
+        "git"
+        "zip"
+        "unzip"
+        "htop"
     )
     
-    local total_steps=${#config_functions[@]}
-    local current=0
+    echo -e "\n${WHITE}Paquetes a instalar:${RESET}"
+    printf '%s\n' "${packages[@]}" | column | sed 's/^/  /'
     
-    for func in "${config_functions[@]}"; do
-        ((current++))
-        echo -e "\n${PURPLE}[${current}/${total_steps}] Ejecutando: ${func//_/ }${NC}"
-        if ! $func; then
-            log "ERROR" "Fallo en $func"
-            return 1
-        fi
-        show_progress "$current" "$total_steps"
-        echo
-    done
+    # Instalar paquetes
+    echo -e "\n${CYAN}Instalando paquetes...${RESET}"
+    if ! pacstrap /mnt "${packages[@]}"; then
+        log "ERROR" "Fallo al instalar paquetes base"
+        return 1
+    fi
     
-    log "SUCCESS" "Configuración del sistema completada"
+    log "SUCCESS" "Paquetes base instalados correctamente"
     return 0
 }
 
-configure_pacman() {
-    log "INFO" "Configurando pacman"
+generate_fstab() {
+    log "INFO" "Generando fstab"
     
-    # Habilitar repositorios
-    local pacman_conf="/mnt/etc/pacman.conf"
+    echo -ne "${CYAN}Generando /etc/fstab...${RESET} "
     
-    # Habilitar multilib
-    sed -i "/\[multilib\]/,/Include/"'s/^#//' "$pacman_conf"
+    if ! genfstab -U /mnt >> /mnt/etc/fstab; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al generar fstab"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
     
-    # Habilitar parallel downloads
-    sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 5/' "$pacman_conf"
+    # Verificar fstab
+    echo -ne "${CYAN}Verificando fstab...${RESET} "
+    if ! grep -q "UUID" /mnt/etc/fstab; then
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "fstab generado incorrectamente"
+        return 1
+    fi
+    echo -e "${GREEN}✔${RESET}"
     
-    # Habilitar color
-    sed -i 's/#Color/Color/' "$pacman_conf"
+    # Mostrar fstab generado
+    echo -e "\n${WHITE}Contenido de fstab:${RESET}"
+    cat /mnt/etc/fstab | sed 's/^/  /'
     
-    # Actualizar base de datos
-    arch-chroot /mnt pacman -Sy
-    
+    log "SUCCESS" "fstab generado correctamente"
     return 0
 }
 
-configure_services() {
-    log "INFO" "Configurando servicios del sistema"
+configure_system_base() {
+    log "INFO" "Configurando sistema base"
     
-    local services=(
-        "NetworkManager"
-        "sshd"
-        "fstrim.timer"
-        "systemd-timesyncd"
-    )
-    
-    for service in "${services[@]}"; do
-        echo -ne "${CYAN}Habilitando $service... ${NC}"
-        if arch-chroot /mnt systemctl enable "$service" &>/dev/null; then
-            echo -e "${GREEN}✔${NC}"
-        else
-            echo -e "${ERROR}✘${NC}"
-            log "WARN" "No se pudo habilitar $service"
-        fi
-    done
-    
-    return 0
-}
-
-configure_hostname() {
-    log "INFO" "Configurando hostname"
-    
-    # Solicitar hostname
+    # Configurar hostname
+    echo -e "\n${WHITE}Configuración del hostname:${RESET}"
     while true; do
-        echo -e "${YELLOW}Ingrese el hostname para el sistema: ${NC}"
+        echo -ne "${YELLOW}Ingrese el hostname para el sistema:${RESET} "
         read -r HOSTNAME
         
-        # Validar hostname
         if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
             break
         else
-            log "WARN" "Hostname inválido. Use solo letras, números y guiones"
+            echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
         fi
     done
     
-    # Configurar hostname
     echo "$HOSTNAME" > /mnt/etc/hostname
     
     # Configurar hosts
@@ -1104,148 +1246,114 @@ configure_hostname() {
 127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
 EOF
     
-    log "SUCCESS" "Hostname configurado: $HOSTNAME"
-    return 0
-}
-
-configure_timezone() {
-    log "INFO" "Configurando zona horaria"
-    
-    # Lista de zonas horarias comunes
-    local common_zones=(
+    # Configurar zona horaria
+    echo -e "\n${WHITE}Configuración de zona horaria:${RESET}"
+    local zones=(
         "America/Guayaquil"    # Ecuador
         "America/Lima"         # Perú
         "America/Bogota"       # Colombia
         "Europe/Madrid"        # España
+        "Otra"
     )
     
-    # Mostrar zonas horarias comunes primero
-    echo -e "${CYAN}Zonas horarias comunes:${NC}"
-    select zone in "${common_zones[@]}" "Otra..."; do
-        if [[ "$zone" == "Otra..." ]]; then
-            # Mostrar todas las zonas disponibles
-            local zones
-            zones=($(find /usr/share/zoneinfo -type f -not -path '*/right/*' -not -path '*/posix/*' -printf '%P\n' | sort))
-            
-            select TIMEZONE in "${zones[@]}"; do
-                if [[ -n "$TIMEZONE" ]]; then
-                    break
-                fi
-                echo -e "${ERROR}Selección inválida${NC}"
-            done
-        else
-            TIMEZONE="$zone"
-        fi
-        break
+    PS3=$'\n'"${YELLOW}Seleccione zona horaria:${RESET} "
+    select zone in "${zones[@]}"; do
+        case $zone in
+            "Otra")
+                # Mostrar todas las zonas disponibles
+                local all_zones
+                mapfile -t all_zones < <(find /usr/share/zoneinfo -type f -not -path '*/posix/*' -not -path '*/right/*' | sed 's|/usr/share/zoneinfo/||')
+                
+                PS3=$'\n'"${YELLOW}Seleccione zona horaria:${RESET} "
+                select TIMEZONE in "${all_zones[@]}"; do
+                    if [[ -n "$TIMEZONE" ]]; then
+                        break 2
+                    fi
+                done
+                ;;
+            *)
+                TIMEZONE="$zone"
+                break
+                ;;
+        esac
     done
     
     # Configurar zona horaria
-    echo -ne "${CYAN}Configurando zona horaria $TIMEZONE... ${NC}"
-    if ! arch-chroot /mnt bash -c "ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime"; then
-        echo -e "${ERROR}✘${NC}"
-        return 1
-    fi
+    arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
+    arch-chroot /mnt hwclock --systohc
     
-    # Sincronizar reloj hardware
-    if ! arch-chroot /mnt hwclock --systohc; then
-        echo -e "${ERROR}✘${NC}"
-        return 1
-    fi
-    echo -e "${GREEN}✔${NC}"
-    
-    return 0
-}
-
-configure_locale() {
-    log "INFO" "Configurando idioma del sistema"
-    
-    # Respaldar locale.gen existente
-    cp /mnt/etc/locale.gen /mnt/etc/locale.gen.backup
-    
-    # Preparar locale.gen
+    # Configurar locale
+    echo -e "\n${WHITE}Configurando locale...${RESET}"
     sed -i 's/#\(en_US.UTF-8\)/\1/' /mnt/etc/locale.gen
     sed -i 's/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
     
-    # Generar locales
-    if ! arch-chroot /mnt locale-gen; then
-        log "ERROR" "Fallo al generar locales"
-        return 1
-    fi
-    
-    # Configurar idioma predeterminado
+    arch-chroot /mnt locale-gen
     echo "LANG=es_ES.UTF-8" > /mnt/etc/locale.conf
-    
-    # Configurar teclado
     echo "KEYMAP=es" > /mnt/etc/vconsole.conf
     
-    return 0
-}
-
-configure_users() {
-    log "INFO" "Configurando usuarios"
+    # Configurar usuarios
+    echo -e "\n${WHITE}Configuración de usuarios:${RESET}"
     
-    # Configurar contraseña de root
-    echo -e "\n${PURPLE}Configuración de contraseña root${NC}"
+    # Root password
+    echo -e "\n${CYAN}Configurando contraseña de root${RESET}"
     while ! arch-chroot /mnt passwd; do
-        echo -e "${ERROR}Error al configurar contraseña root. Intente nuevamente${NC}"
+        echo -e "${RED}Error al configurar contraseña. Intente nuevamente${RESET}"
     done
     
-    # Crear usuario normal
+    # Usuario normal
     while true; do
-        echo -e "\n${YELLOW}Ingrese nombre para el nuevo usuario: ${NC}"
+        echo -ne "\n${YELLOW}Ingrese nombre para el nuevo usuario:${RESET} "
         read -r USERNAME
         
         if [[ "$USERNAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
             break
         else
-            echo -e "${ERROR}Nombre de usuario inválido. Use letras minúsculas, números y guiones${NC}"
+            echo -e "${RED}Nombre inválido. Use letras minúsculas, números y guiones${RESET}"
         fi
     done
     
-    # Crear usuario y agregarlo a grupos
-    if ! arch-chroot /mnt useradd -m -G wheel,audio,video,storage,optical -s /bin/bash "$USERNAME"; then
-        log "ERROR" "Fallo al crear usuario"
-        return 1
-    fi
+    # Crear usuario y grupos
+    arch-chroot /mnt useradd -m -G wheel,audio,video,storage,optical -s /bin/bash "$USERNAME"
     
-    # Configurar contraseña del usuario
-    echo -e "\n${PURPLE}Configuración de contraseña para $USERNAME${NC}"
+    echo -e "\n${CYAN}Configurando contraseña para $USERNAME${RESET}"
     while ! arch-chroot /mnt passwd "$USERNAME"; do
-        echo -e "${ERROR}Error al configurar contraseña. Intente nuevamente${NC}"
+        echo -e "${RED}Error al configurar contraseña. Intente nuevamente${RESET}"
     done
     
     # Configurar sudo
     echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
     chmod 440 /mnt/etc/sudoers.d/wheel
     
-    log "SUCCESS" "Usuarios configurados correctamente"
+    # Habilitar servicios básicos
+    echo -e "\n${WHITE}Habilitando servicios...${RESET}"
+    local services=(
+        "NetworkManager"
+        "fstrim.timer"
+        "systemd-timesyncd"
+    )
+    
+    for service in "${services[@]}"; do
+        echo -ne "${CYAN}Habilitando $service...${RESET} "
+        if arch-chroot /mnt systemctl enable "$service" &>/dev/null; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            log "WARN" "No se pudo habilitar $service"
+        fi
+    done
+    
+    log "SUCCESS" "Sistema base configurado correctamente"
     return 0
 }
-
-configure_network() {
-    log "INFO" "Configurando red"
-    
-    # Habilitar NetworkManager
-    arch-chroot /mnt systemctl enable NetworkManager
-    
-    # Configurar resolv.conf
-    echo "nameserver 1.1.1.1" > /mnt/etc/resolv.conf
-    echo "nameserver 8.8.8.8" >> /mnt/etc/resolv.conf
-    
-    # Proteger resolv.conf
-    chattr +i /mnt/etc/resolv.conf
-    
-    return 0
-}
-
-# ==============================================================================
-# Funciones de Bootloader y Finalización
-# ==============================================================================
 
 configure_bootloader() {
-    log "INFO" "Instalando y configurando bootloader"
-
-    # Instalar paquetes adicionales necesarios
+    log "INFO" "Configurando bootloader"
+    
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Configuración del Bootloader      ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    # Instalar paquetes necesarios
     local bootloader_packages=(
         "grub"
         "efibootmgr"
@@ -1253,78 +1361,44 @@ configure_bootloader() {
         "dosfstools"
         "mtools"
     )
-
-    # Instalar paquetes del bootloader
-    echo -e "${CYAN}Instalando paquetes necesarios para el bootloader...${NC}"
-    for package in "${bootloader_packages[@]}"; do
-        if ! arch-chroot /mnt pacman -S --noconfirm "$package"; then
-            log "ERROR" "Fallo al instalar $package"
+    
+    echo -e "${CYAN}Instalando paquetes del bootloader...${RESET}"
+    if ! arch-chroot /mnt pacman -S --noconfirm "${bootloader_packages[@]}"; then
+        log "ERROR" "Fallo al instalar paquetes del bootloader"
+        return 1
+    fi
+    
+    # Instalar GRUB según el modo de arranque
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -e "\n${CYAN}Instalando GRUB para UEFI...${RESET}"
+        if ! arch-chroot /mnt grub-install \
+            --target=x86_64-efi \
+            --efi-directory=/boot/efi \
+            --bootloader-id=GRUB \
+            --recheck; then
+            log "ERROR" "Fallo al instalar GRUB (UEFI)"
             return 1
         fi
-    done
-
-    # Configuración específica según el modo de arranque
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        configure_uefi_bootloader
     else
-        configure_bios_bootloader
+        echo -e "\n${CYAN}Instalando GRUB para BIOS...${RESET}"
+        if ! arch-chroot /mnt grub-install \
+            --target=i386-pc \
+            --recheck \
+            "$TARGET_DISK"; then
+            log "ERROR" "Fallo al instalar GRUB (BIOS)"
+            return 1
+        fi
     fi
-
-    # Verificar la instalación del bootloader
-    verify_bootloader_installation
-    return $?
-}
-
-configure_uefi_bootloader() {
-    log "INFO" "Configurando bootloader UEFI"
-
-    # Verificar punto de montaje EFI
-    if ! mountpoint -q /mnt/boot/efi; then
-        log "ERROR" "Punto de montaje EFI no encontrado"
-        return 1
-    fi
-
-    # Instalar GRUB para UEFI
-    echo -e "${CYAN}Instalando GRUB para UEFI...${NC}"
-    if ! arch-chroot /mnt grub-install \
-        --target=x86_64-efi \
-        --efi-directory=/boot/efi \
-        --bootloader-id=GRUB \
-        --recheck; then
-        log "ERROR" "Fallo al instalar GRUB (UEFI)"
-        return 1
-    fi
-
+    
     # Configurar GRUB
-    configure_grub_common
-}
-
-configure_bios_bootloader() {
-    log "INFO" "Configurando bootloader BIOS"
-
-    # Instalar GRUB para BIOS
-    echo -e "${CYAN}Instalando GRUB para BIOS...${NC}"
-    if ! arch-chroot /mnt grub-install \
-        --target=i386-pc \
-        --recheck \
-        "$TARGET_DISK"; then
-        log "ERROR" "Fallo al instalar GRUB (BIOS)"
-        return 1
-    fi
-
-    # Configurar GRUB
-    configure_grub_common
-}
-
-configure_grub_common() {
-    log "INFO" "Configurando GRUB común"
-
-    # Backup del archivo de configuración original
+    echo -e "\n${CYAN}Configurando GRUB...${RESET}"
+    
+    # Backup de la configuración original
     if [[ -f /mnt/etc/default/grub ]]; then
         cp /mnt/etc/default/grub /mnt/etc/default/grub.backup
     fi
-
-    # Configurar opciones de GRUB
+    
+    # Configuración personalizada de GRUB
     cat > /mnt/etc/default/grub <<EOF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
@@ -1338,100 +1412,177 @@ GRUB_GFXMODE=auto
 GRUB_GFXPAYLOAD_LINUX=keep
 GRUB_DISABLE_OS_PROBER=false
 EOF
-
-    # Generar configuración de GRUB
-    echo -e "${CYAN}Generando configuración de GRUB...${NC}"
+    
+    # Generar configuración
+    echo -e "${CYAN}Generando configuración de GRUB...${RESET}"
     if ! arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg; then
         log "ERROR" "Fallo al generar configuración de GRUB"
         return 1
     fi
-
-    return 0
-}
-
-verify_bootloader_installation() {
-    log "INFO" "Verificando instalación del bootloader"
-
-    # Verificar archivos esenciales de GRUB
+    
+    # Verificar instalación
     local essential_files=(
         "/mnt/boot/grub/grub.cfg"
         "/mnt/etc/default/grub"
     )
-
+    
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        essential_files+=(
-            "/mnt/boot/efi/EFI/GRUB/grubx64.efi"
-        )
+        essential_files+=("/mnt/boot/efi/EFI/GRUB/grubx64.efi")
     else
-        essential_files+=(
-            "/mnt/boot/grub/i386-pc/core.img"
-        )
+        essential_files+=("/mnt/boot/grub/i386-pc/core.img")
     fi
-
+    
+    echo -e "\n${CYAN}Verificando archivos del bootloader...${RESET}"
     local missing_files=0
     for file in "${essential_files[@]}"; do
-        echo -ne "${CYAN}Verificando $file... ${NC}"
+        echo -ne "${WHITE}Verificando $file...${RESET} "
         if [[ -f "$file" ]]; then
-            echo -e "${GREEN}✔${NC}"
+            echo -e "${GREEN}✔${RESET}"
         else
-            echo -e "${ERROR}✘${NC}"
+            echo -e "${RED}✘${RESET}"
             ((missing_files++))
         fi
     done
-
+    
     if ((missing_files > 0)); then
         log "ERROR" "Faltan archivos esenciales del bootloader"
         return 1
     fi
-
-    log "SUCCESS" "Bootloader instalado correctamente"
+    
+    log "SUCCESS" "Bootloader instalado y configurado correctamente"
     return 0
 }
 
-# Función para realizar la limpieza final
-cleanup() {
-    log "INFO" "Realizando limpieza final"
+# ==============================================================================
+# Funciones de Post-instalación y Temas
+# ==============================================================================
 
-    # Desmontar particiones en orden inverso
-    echo -e "\n${CYAN}Desmontando sistemas de archivos...${NC}"
+configure_zeuspy_theme() {
+    log "INFO" "Configurando tema personalizado ZeuspyEC"
     
-    local mountpoints=(
-        "/mnt/boot/efi"
-        "/mnt/boot"
-        "/mnt"
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Instalación Tema ZeuspyEC         ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    # Instalar paquetes base para BSPWM
+    local bspwm_packages=(
+        # WM y componentes básicos
+        "bspwm"
+        "sxhkd"
+        "polybar"
+        "picom"
+        "dunst"
+        "rofi"
+        "nitrogen"
+        
+        # Terminal y utilidades
+        "alacritty"
+        "ranger"
+        "neofetch"
+        "htop"
+        "feh"
+        "maim"
+        "xclip"
+        
+        # Fuentes
+        "ttf-dejavu"
+        "ttf-liberation"
+        "noto-fonts"
+        "ttf-hack"
+        "ttf-font-awesome"
+        
+        # Tema y GTK
+        "lxappearance"
+        "gtk-engine-murrine"
+        "arc-gtk-theme"
+        "papirus-icon-theme"
+        
+        # Multimedia
+        "brightnessctl"
+        "pulseaudio"
+        "pavucontrol"
+        "pamixer"
+        
+        # Desarrollo
+        "base-devel"
+        "git"
+        "wget"
+        "curl"
+        
+        # Utilidades del sistema
+        "networkmanager"
+        "network-manager-applet"
+        "bluez"
+        "bluez-utils"
+        "udiskie"
+        "ntfs-3g"
+        "gvfs"
     )
-
-    for point in "${mountpoints[@]}"; do
-        if mountpoint -q "$point"; then
-            echo -ne "${CYAN}Desmontando $point... ${NC}"
-            if umount -R "$point"; then
-                echo -e "${GREEN}✔${NC}"
-            else
-                echo -e "${ERROR}✘${NC}"
-                log "WARN" "Fallo al desmontar $point"
-            fi
+    
+    echo -e "${WHITE}Instalando paquetes necesarios...${RESET}"
+    # Mostrar paquetes a instalar
+    printf '%s\n' "${bspwm_packages[@]}" | column | sed 's/^/  /'
+    
+    if ! arch-chroot /mnt pacman -S --noconfirm "${bspwm_packages[@]}"; then
+        log "ERROR" "Fallo al instalar paquetes necesarios"
+        return 1
+    fi
+    
+    # Crear estructura de directorios
+    echo -e "\n${CYAN}Creando estructura de directorios...${RESET}"
+    arch-chroot /mnt mkdir -p "/home/$USERNAME/.config"/{bspwm,sxhkd,polybar,picom,dunst,rofi,alacritty}
+    
+    # Descargar e instalar tema gh0stzk
+    echo -e "\n${CYAN}Descargando tema gh0stzk...${RESET}"
+    arch-chroot /mnt bash -c "cd /home/$USERNAME && \
+        curl -O https://raw.githubusercontent.com/gh0stzk/dotfiles/master/RiceInstaller && \
+        chmod +x RiceInstaller && \
+        chown $USERNAME:$USERNAME RiceInstaller && \
+        su - $USERNAME -c './RiceInstaller'"
+    
+    # Configurar autostart de BSPWM
+    echo -e "\n${CYAN}Configurando inicio automático...${RESET}"
+    cat > "/mnt/home/$USERNAME/.xinitrc" <<EOF
+#!/bin/sh
+exec bspwm
+EOF
+    
+    # Configurar archivo .bash_profile
+    cat > "/mnt/home/$USERNAME/.bash_profile" <<EOF
+if [[ ! \$DISPLAY && \$XDG_VTNR -eq 1 ]]; then
+    exec startx
+fi
+EOF
+    
+    # Ajustar permisos
+    arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "/home/$USERNAME"
+    arch-chroot /mnt chmod +x "/home/$USERNAME/.xinitrc"
+    
+    # Habilitar servicios necesarios
+    echo -e "\n${CYAN}Habilitando servicios...${RESET}"
+    local services=(
+        "NetworkManager"
+        "bluetooth"
+        "sshd"
+        "fstrim.timer"
+    )
+    
+    for service in "${services[@]}"; do
+        echo -ne "${WHITE}Habilitando $service...${RESET} "
+        if arch-chroot /mnt systemctl enable "$service" &>/dev/null; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
         fi
     done
-
-    # Desactivar swap
-    echo -ne "${CYAN}Desactivando swap... ${NC}"
-    if swapoff -a; then
-        echo -e "${GREEN}✔${NC}"
-    else
-        echo -e "${ERROR}✘${NC}"
-        log "WARN" "Fallo al desactivar swap"
-    fi
-
-    # Sincronizar sistema de archivos
-    echo -ne "${CYAN}Sincronizando sistema de archivos... ${NC}"
-    sync
-    echo -e "${GREEN}✔${NC}"
-
-    log "SUCCESS" "Limpieza completada"
+    
+    log "SUCCESS" "Tema ZeuspyEC instalado correctamente"
+    return 0
 }
 
-# Función para generar informe final
 generate_installation_report() {
+    log "INFO" "Generando reporte de instalación"
+    
     local report_file="/mnt/root/installation_report.txt"
     
     {
@@ -1457,87 +1608,109 @@ generate_installation_report() {
         echo ""
         echo "=== Fin del Reporte ==="
     } > "$report_file"
-
-    log "INFO" "Reporte de instalación generado en $report_file"
+    
+    log "SUCCESS" "Reporte generado en $report_file"
 }
 
-# Función principal mejorada
-main() {
-    local start_time
-    start_time=$(date +%s)
-
-    # Inicializar script
-    init_script
-
-    # Pasos de instalación
-    local installation_steps=(
-        "check_system_requirements"
-        "check_network_connectivity"
-        "prepare_disk"
-        "install_base_system"
-        "configure_system"
-        "configure_bootloader"
-        "generate_installation_report"
+cleanup() {
+    log "INFO" "Realizando limpieza final"
+    
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Limpieza del Sistema              ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    # Desmontar particiones en orden inverso
+    local mountpoints=(
+        "/mnt/boot/efi"
+        "/mnt/boot"
+        "/mnt"
     )
-
-    # Ejecutar pasos de instalación con progreso
-    local total_steps=${#installation_steps[@]}
-    local current=0
-
-    for step in "${installation_steps[@]}"; do
-        ((current++))
-        echo -e "\n${HEADER}[${current}/${total_steps}] ${step//_/ }${NC}"
-        if ! $step; then
-            log "ERROR" "Instalación fallida en: $step"
-            cleanup
-            exit 1
+    
+    for point in "${mountpoints[@]}"; do
+        if mountpoint -q "$point"; then
+            echo -ne "${WHITE}Desmontando $point...${RESET} "
+            if umount -R "$point"; then
+                echo -e "${GREEN}✔${RESET}"
+            else
+                echo -e "${RED}✘${RESET}"
+                log "WARN" "Fallo al desmontar $point"
+            fi
         fi
-        show_progress "$current" "$total_steps"
-        echo
     done
+    
+    # Desactivar swap
+    echo -ne "${WHITE}Desactivando swap...${RESET} "
+    if swapoff -a; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "WARN" "Fallo al desactivar swap"
+    fi
+    
+    # Sincronizar sistema de archivos
+    echo -ne "${WHITE}Sincronizando sistema de archivos...${RESET} "
+    sync
+    echo -e "${GREEN}✔${RESET}"
+}
 
-    # Calcular tiempo de instalación
-    local end_time
-    end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    local minutes=$((duration / 60))
-    local seconds=$((duration % 60))
-
-    # Mostrar resumen de instalación
-    echo -e "\n${PURPLE}Resumen de la Instalación${NC}"
-    echo -e "${GREEN}✔ Instalación completada exitosamente${NC}"
-    echo -e "${CYAN}• Tiempo total: ${minutes}m ${seconds}s${NC}"
-    echo -e "${CYAN}• Hostname: $HOSTNAME${NC}"
-    echo -e "${CYAN}• Usuario: $USERNAME${NC}"
-    echo -e "${CYAN}• Zona horaria: $TIMEZONE${NC}"
-
-    # Mostrar instrucciones post-instalación
-    echo -e "\n${YELLOW}Instrucciones post-instalación:${NC}"
-    echo -e "1. El informe de instalación está disponible en /root/installation_report.txt"
-    echo -e "2. Se recomienda reiniciar el sistema para usar la nueva instalación"
-    echo -e "3. Después del reinicio, inicie sesión como usuario normal"
-    echo -e "4. Use 'sudo' para tareas administrativas"
-
+show_post_install_message() {
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Instalación Completada            ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    echo -e "${GREEN}¡Instalación completada exitosamente!${RESET}\n"
+    echo -e "${WHITE}Información importante:${RESET}"
+    echo -e "  • Hostname: ${CYAN}$HOSTNAME${RESET}"
+    echo -e "  • Usuario: ${CYAN}$USERNAME${RESET}"
+    echo -e "  • Zona horaria: ${CYAN}$TIMEZONE${RESET}"
+    echo -e "  • Tema instalado: ${CYAN}ZeuspyEC BSPWM${RESET}"
+    
+    echo -e "\n${WHITE}Próximos pasos:${RESET}"
+    echo -e "  1. El reporte de instalación está en ${CYAN}/root/installation_report.txt${RESET}"
+    echo -e "  2. Reinicia el sistema con ${CYAN}reboot${RESET}"
+    echo -e "  3. Retira el medio de instalación"
+    echo -e "  4. Inicia sesión como ${CYAN}$USERNAME${RESET}"
+    echo -e "  5. Usa ${CYAN}startx${RESET} para iniciar el entorno gráfico"
+    
+    echo -e "\n${WHITE}Atajos de teclado importantes:${RESET}"
+    echo -e "  • ${CYAN}Win + Enter${RESET}: Abrir terminal"
+    echo -e "  • ${CYAN}Win + W${RESET}: Cerrar ventana"
+    echo -e "  • ${CYAN}Win + Space${RESET}: Menú de aplicaciones"
+    echo -e "  • ${CYAN}Win + Alt + R${RESET}: Reiniciar BSPWM"
+    echo -e "  • ${CYAN}Win + Alt + Q${RESET}: Cerrar sesión"
+    
     # Preguntar por reinicio
-    echo -e "\n${YELLOW}¿Desea reiniciar el sistema ahora? (si/NO): ${NC}"
+    echo -e "\n${YELLOW}¿Desea reiniciar el sistema ahora? (s/N):${RESET} "
     read -r reboot_choice
-
-    if [[ "$reboot_choice" =~ ^[Ss][Ii]$ ]]; then
+    
+    if [[ "$reboot_choice" =~ ^[Ss]$ ]]; then
         log "INFO" "Reiniciando sistema"
         cleanup
         reboot
     else
         log "INFO" "Reinicio pospuesto"
         cleanup
-        echo -e "${WARNING}Recuerde reiniciar el sistema cuando esté listo${NC}"
+        echo -e "${YELLOW}Recuerde reiniciar el sistema cuando esté listo${RESET}"
     fi
 }
 
-# Iniciar instalación solo si se ejecuta como root
-if [[ $EUID -ne 0 ]]; then
-    echo -e "${ERROR}Este script debe ejecutarse como root${NC}"
-    exit 1
-fi
-
-# Ejecutar el script principal
-main "$@"
+# Función principal final
+finalize_installation() {
+    log "INFO" "Finalizando instalación"
+    
+    local final_steps=(
+        "configure_zeuspy_theme"
+        "generate_installation_report"
+    )
+    
+    # Ejecutar pasos finales
+    for step in "${final_steps[@]}"; do
+        if ! $step; then
+            log "ERROR" "Fallo en paso final: $step"
+            return 1
+        fi
+    done
+    
+    show_post_install_message
+    return 0
+}

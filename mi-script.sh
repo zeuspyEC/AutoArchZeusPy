@@ -22,6 +22,8 @@ YELLOW='\033[1;33m'
 PURPLE='\033[0;35m'
 WHITE='\033[1;37m'
 NC='\033[0m'  # No Color
+
+# Variables de colores para funciones
 ERROR="${RED}"
 SUCCESS="${GREEN}"  
 WARNING="${YELLOW}"
@@ -44,50 +46,49 @@ declare -g LOG_FILE="/tmp/zeuspyec_installer.log"
 declare -g ERROR_LOG="/tmp/zeuspyec_installer_error.log" 
 declare -g DEBUG_LOG="/tmp/zeuspyec_installer_debug.log"
 
-# Paquetes requeridos
-declare -g REQUIRED_PACKAGES=(
-    "base"
-    "base-devel"
-    "linux"
-    "linux-firmware"
-    "networkmanager"
-    "grub"
-    "efibootmgr"
-    "sudo"
-    "vim" 
-    "git"
-)
-
-# Función de logging (debe estar definida antes de usarla en otras funciones)
+# Función de logging corregida
 log() {
-    local level="$1"
-    shift  
-    local message="$*"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local function_name="${FUNCNAME[1]:-main}"  
+    local level="${1}"
+    shift
+    local message="${*}"
+    local timestamp
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+    local function_name="${FUNCNAME[1]:-main}"
     local line_number="${BASH_LINENO[0]}"
-
-    # Formato de log
-    local log_entry="[$timestamp] [$level] [$function_name:$line_number] $message"
     
-    case "$level" in
+    local log_entry="[${timestamp}] [${level}] [${function_name}:${line_number}] ${message}"
+    
+    case "${level}" in
         "DEBUG")
-            echo -e "${CYAN}$log_entry${NC}" >> "$DEBUG_LOG"
+            echo -e "${CYAN}${log_entry}${NC}" >> "${DEBUG_LOG}"
             ;;
         "INFO") 
-            echo -e "${GREEN}$log_entry${NC}" | tee -a "$LOG_FILE"
+            echo -e "${GREEN}${log_entry}${NC}" | tee -a "${LOG_FILE}"
             ;;
         "SUCCESS")
-            echo -e "${GREEN}✔ $log_entry${NC}" | tee -a "$LOG_FILE"  
+            echo -e "${GREEN}✔ ${log_entry}${NC}" | tee -a "${LOG_FILE}"
             ;;
         "WARN")
-            echo -e "${YELLOW}⚠ $log_entry${NC}" | tee -a "$LOG_FILE"
-            ;;  
+            echo -e "${YELLOW}⚠ ${log_entry}${NC}" | tee -a "${LOG_FILE}"
+            ;;
         "ERROR")
-            echo -e "${RED}✘ $log_entry${NC}" | tee -a "$ERROR_LOG"
-            print_system_info >> "$ERROR_LOG"
+            echo -e "${RED}✘ ${log_entry}${NC}" | tee -a "${ERROR_LOG}"
+            print_system_info >> "${ERROR_LOG}"
             ;;
     esac
+}
+
+# Sistema de logging más simple para debugging
+debug_log() {
+    echo "[DEBUG] $*" >> "${DEBUG_LOG}"
+}
+
+error_log() {
+    echo "[ERROR] $*" >> "${ERROR_LOG}"
+}
+
+info_log() {
+    echo "[INFO] $*" >> "${LOG_FILE}"
 }
 
 # Función para mostrar el banner

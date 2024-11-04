@@ -1882,7 +1882,7 @@ main() {
     local installation_steps=(
     "check_system_requirements"
     "check_network_connectivity"
-    "detect_other_os"  # Nueva función
+    "detect_existing_os"  
     "prepare_disk"
     "install_base_system"
     "configure_system_base"

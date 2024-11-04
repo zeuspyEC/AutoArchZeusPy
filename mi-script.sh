@@ -565,7 +565,7 @@ prepare_disk() {
     if [[ -z "${available_disks[*]}" ]]; then
         log "ERROR" "No se encontraron discos disponibles"
         return 1
-    }
+    fi
     
     echo -e "\n${PURPLE}Discos disponibles:${NC}\n"
     printf '%s\n' "${available_disks[@]}" | nl

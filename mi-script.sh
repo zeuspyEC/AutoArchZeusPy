@@ -1714,3 +1714,126 @@ finalize_installation() {
     show_post_install_message
     return 0
 }
+
+# ==============================================================================
+# Función Principal
+# ==============================================================================
+
+detect_other_os() {
+    log "INFO" "Detectando otros sistemas operativos"
+    
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║      Sistemas Operativos Detectados    ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    # Instalar os-prober si no está presente
+    if ! command -v os-prober &>/dev/null; then
+        echo -e "${YELLOW}Instalando os-prober...${RESET}"
+        pacman -Sy --noconfirm os-prober
+    fi
+    
+    local detected_os=()
+    local disk_list
+    disk_list=($(lsblk -pndo NAME))
+    
+    for disk in "${disk_list[@]}"; do
+        echo -e "${WHITE}Analizando disco: ${CYAN}$disk${RESET}"
+        local partitions
+        partitions=($(lsblk -pnlo NAME "$disk" | grep -v "^$disk$"))
+        
+        for part in "${partitions[@]}"; do
+            # Intentar montar la partición temporalmente
+            mkdir -p /mnt/os-detect
+            if mount "$part" /mnt/os-detect 2>/dev/null; then
+                # Buscar Windows
+                if [[ -d "/mnt/os-detect/Windows" ]]; then
+                    detected_os+=("Windows (en $part)")
+                    echo -e "  ${GREEN}✔${RESET} Encontrado Windows en $part"
+                fi
+                
+                # Buscar Linux
+                if [[ -d "/mnt/os-detect/boot" ]]; then
+                    if [[ -f "/mnt/os-detect/etc/os-release" ]]; then
+                        local os_name
+                        os_name=$(grep "^NAME=" /mnt/os-detect/etc/os-release | cut -d'"' -f2)
+                        detected_os+=("$os_name (en $part)")
+                        echo -e "  ${GREEN}✔${RESET} Encontrado $os_name en $part"
+                    fi
+                fi
+                umount /mnt/os-detect
+            fi
+        done
+    done
+    
+    rm -rf /mnt/os-detect
+    
+    if ((${#detected_os[@]} > 0)); then
+        echo -e "\n${YELLOW}¡Atención! Se detectaron otros sistemas operativos.${RESET}"
+        echo -e "${YELLOW}Se configurará GRUB para dual/multi boot.${RESET}\n"
+        echo -e "${WHITE}Sistemas detectados:${RESET}"
+        printf '%s\n' "${detected_os[@]}" | sed 's/^/  • /'
+    else
+        echo -e "\n${WHITE}No se detectaron otros sistemas operativos${RESET}"
+    fi
+    
+    return 0
+}
+
+main() {
+    # Iniciar contador de tiempo
+    local start_time
+    start_time=$(date +%s)
+    
+    # Inicializar script
+    init_script
+    
+    # Pasos de instalación
+    local installation_steps=(
+        "check_system_requirements"
+        "check_network_connectivity"
+        "detect_other_os"
+        "prepare_disk"
+        "install_base_system"
+        "configure_system_base"
+        "configure_bootloader"
+        "configure_zeuspy_theme"
+        "generate_installation_report"
+    )
+    
+    # Ejecutar pasos de instalación
+    local total_steps=${#installation_steps[@]}
+    local current=0
+    
+    for step in "${installation_steps[@]}"; do
+        ((current++))
+        echo -e "\n${HEADER}[$current/$total_steps] ${step//_/ }${RESET}"
+        if ! $step; then
+            log "ERROR" "Instalación fallida en: $step"
+            cleanup
+            exit 1
+        fi
+        show_progress "$current" "$total_steps"
+        echo
+    done
+    
+    # Calcular tiempo de instalación
+    local end_time
+    end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    local minutes=$((duration / 60))
+    local seconds=$((duration % 60))
+    
+    # Mostrar resumen y finalizar
+    show_post_install_message
+    
+    return 0
+}
+
+# Verificar si se ejecuta como root
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${ERROR}Este script debe ejecutarse como root${RESET}"
+    exit 1
+fi
+
+# Ejecutar instalador
+main "$@"

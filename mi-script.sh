@@ -354,6 +354,10 @@ check_system_requirements() {
     return 0
 }
 
+# ==============================================================================
+# Funciones de Verificación y Preparación del Sistema
+# ==============================================================================
+
 # Función modificada para verificar y listar todas las particiones disponibles
 verify_disk_space() {
     log "INFO" "Analizando dispositivos de almacenamiento"
@@ -361,13 +365,15 @@ verify_disk_space() {
     echo -e "\n${PURPLE}== Dispositivos de Almacenamiento Disponibles ==${NC}"
     
     # Obtener lista completa de dispositivos y particiones
-    local devices
-    mapfile -t devices < <(lsblk -pno NAME,SIZE,TYPE,MOUNTPOINT,MODEL | grep -E 'disk|part')
+    local devices=()
+    while IFS= read -r line; do
+        devices+=("$line")
+    done < <(lsblk -pno NAME,SIZE,TYPE,MOUNTPOINT,MODEL | grep -E 'disk|part')
     
     if [[ ${#devices[@]} -eq 0 ]]; then
         log "ERROR" "No se encontraron dispositivos de almacenamiento"
         return 1
-    }
+    fi
     
     # Mostrar todos los dispositivos y sus particiones
     echo -e "\n${CYAN}Discos y Particiones:${NC}"
@@ -405,7 +411,7 @@ verify_disk_space() {
     
     # Mostrar información detallada del disco seleccionado
     echo -e "\n${PURPLE}Información detallada del disco seleccionado:${NC}"
-    fdisk -l "$TARGET_DISK"
+    fdisk -l "$TARGET_DISK" || true
     
     # Verificar si hay sistemas operativos instalados
     if command -v os-prober &>/dev/null; then
@@ -415,22 +421,27 @@ verify_disk_space() {
     
     # Preguntar al usuario cómo desea proceder
     echo -e "\n${YELLOW}¿Cómo desea proceder?${NC}"
-    select option in "Usar disco completo" "Gestionar particiones manualmente" "Cancelar"; do
-        case $option in
-            "Usar disco completo")
-                show_warning_message
-                return $?
-                ;;
-            "Gestionar particiones manualmente")
-                manage_partitions_manually
-                return $?
-                ;;
-            "Cancelar")
-                log "INFO" "Operación cancelada por el usuario"
-                return 1
-                ;;
-        esac
-    done
+    echo -e "1) Usar disco completo"
+    echo -e "2) Gestionar particiones manualmente"
+    echo -e "3) Cancelar"
+    
+    local option
+    read -r option
+    
+    case $option in
+        1)  show_warning_message
+            return $?
+            ;;
+        2)  manage_partitions_manually
+            return $?
+            ;;
+        3)  log "INFO" "Operación cancelada por el usuario"
+            return 1
+            ;;
+        *)  log "ERROR" "Opción inválida"
+            return 1
+            ;;
+    esac
 }
 
 manage_partitions_manually() {

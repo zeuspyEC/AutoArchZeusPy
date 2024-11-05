@@ -100,7 +100,6 @@ declare -g BSPWM_PACKAGES=(
     "neofetch"
 )
 
-# Banner mejorado
 display_banner() {
     clear
     echo -e "${BLUE}"
@@ -121,8 +120,37 @@ EOF
     echo -e "${BRIGHT_BLUE}      https://github.com/zeuspyEC${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}\n"
 }
+show_main_menu() {
+    clear
+    display_banner
+    
+    echo -e "\n${CYAN}Seleccione el tipo de instalación:${RESET}\n"
+    echo -e "  ${CYAN}1)${RESET} ${GREEN}Instalación guiada${RESET}"
+    echo -e "  ${CYAN}2)${RESET} ${YELLOW}Instalación automática${RESET}"
+    echo -e "  ${CYAN}3)${RESET} ${RED}Salir${RESET}\n"
+    
+    echo -ne "${YELLOW}Ingrese su elección (1-3):${RESET} "
+    read -r choice
+    
+    case $choice in
+        1)
+            guided_installation
+            ;;
+        2)
+            automatic_installation
+            ;;
+        3)
+            log "INFO" "Instalación cancelada por el usuario"
+            exit 0
+            ;;
+        *)
+            echo -e "\n${RED}Opción inválida${RESET}"
+            sleep 2
+            show_main_menu
+            ;;
+    esac
+}
 
-# Función de logging mejorada
 log() {
     local level="$1"
     shift
@@ -1575,6 +1603,118 @@ EOF
 # ==============================================================================
 # Funciones de Post-instalación y Temas
 # ==============================================================================
+install_desktop_environment() {
+    log "INFO" "Instalando entorno de escritorio"
+    
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║ Selección de Entorno de Escritorio     ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    local environments=(
+        "GNOME"
+        "XFCE"
+        "Qtile"
+        "BSPWM"
+        "Hyprland"
+    )
+    
+    PS3=$'\n'"${YELLOW}Seleccione entorno de escritorio:${RESET} "
+    select env in "${environments[@]}"; do
+        case $env in
+            "GNOME"|"XFCE"|"Qtile"|"BSPWM"|"Hyprland")
+                install_packages_for "$env"
+                configure_display_manager
+                break
+                ;;
+            *)
+                echo -e "\n${RED}Opción inválida${RESET}"
+                ;;
+        esac
+    done
+    
+    log "SUCCESS" "Entorno de escritorio instalado correctamente"
+    return 0
+}
+
+install_packages_for() {
+    local env=$1
+    local packages=()
+    
+    case $env in
+        "GNOME")
+            packages=(
+                gnome
+                gnome-extra
+                gdm
+            )
+            ;;
+        "XFCE")
+            packages=(
+                xfce4
+                xfce4-goodies
+                lightdm
+                lightdm-gtk-greeter
+            )
+            ;;
+        "Qtile")
+            packages=(
+                qtile
+                xorg-server
+                xorg-xinit
+                lightdm
+                lightdm-gtk-greeter
+            )
+            ;;
+        "BSPWM")
+            packages=(
+                bspwm
+                sxhkd
+                xorg-server
+                xorg-xinit
+                lightdm
+                lightdm-gtk-greeter
+            )
+            ;;
+        "Hyprland")
+            packages=(
+                hyprland
+                xorg-xwayland
+                sddm
+            )
+            ;;
+    esac
+    
+    echo -e "\n${CYAN}Instalando paquetes para $env...${RESET}"
+    if ! arch-chroot /mnt pacman -S --noconfirm "${packages[@]}"; then
+        log "ERROR" "Fallo al instalar paquetes para $env"
+        return 1
+    fi
+    
+    return 0
+}
+
+configure_display_manager() {
+    log "INFO" "Configurando display manager"
+    
+    local display_manager
+    
+    if [[ "$env" == "GNOME" ]]; then
+        display_manager="gdm"
+    elif [[ "$env" == "Hyprland" ]]; then
+        display_manager="sddm"
+    else
+        display_manager="lightdm"
+    fi
+    
+    echo -e "\n${CYAN}Habilitando $display_manager...${RESET}"
+    if ! arch-chroot /mnt systemctl enable "$display_manager"; then
+        log "ERROR" "Fallo al habilitar $display_manager"
+        return 1
+    fi
+    
+    log "SUCCESS" "Display manager configurado correctamente"
+    return 0
+}
 
 configure_zeuspy_theme() {
     log "INFO" "Configurando tema personalizado ZeuspyEC"
@@ -1894,6 +2034,7 @@ detect_existing_os() {
         sleep 2
     fi
 }
+
 error_handler() {
     local exit_code=$1
     local line_no=$2
@@ -1959,6 +2100,9 @@ main() {
     
     # Inicializar script
     init_script
+
+    # Mostrar menú principal
+    show_main_menu
     
     # Pasos de instalación
     local installation_steps=(

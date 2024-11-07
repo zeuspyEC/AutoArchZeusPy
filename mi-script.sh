@@ -151,6 +151,7 @@ show_main_menu() {
         show_main_menu
         ;;
 esac
+}
     automatic_installation() {
     # INICIO CORRECCIÓN
     # Detectar automáticamente el sistema operativo existente

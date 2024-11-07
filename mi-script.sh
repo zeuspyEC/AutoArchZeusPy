@@ -1259,7 +1259,12 @@ verify_partitions() {
 # Funciones de Instalación Base
 # ==============================================================================
 
-# Ejemplo de uso de try-catch en la función install_base_system:
+# Función para manejar errores
+handle_error() {
+    log "ERROR" "$1"
+    return 1
+}
+
 install_base_system() {
     log "INFO" "Iniciando instalación del sistema base"
     
@@ -1267,33 +1272,27 @@ install_base_system() {
     echo -e "${CYAN}║      Instalación del Sistema Base      ║${RESET}"
     echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
     
-    # INICIO CORRECCIÓN
-    try {
-        # Array de funciones de instalación
-        local install_steps=(
-            "install_essential_packages"
-            "generate_fstab"
-            "configure_system_base"
-            "configure_bootloader"
-        )
-        
-        # Ejecutar pasos de instalación
-        local total_steps=${#install_steps[@]}
-        local current=0
-        
-        for step in "${install_steps[@]}"; do
-            ((current++))
-            echo -e "\n${WHITE}[$current/$total_steps] Ejecutando: ${step//_/ }${RESET}"
-            if ! $step; then
-                throw "Fallo en: $step"
-            fi
-            show_progress "$current" "$total_steps"
-        done
-    } catch {
-        log "ERROR" "$@"
-        return 1
-    }
-    # FIN CORRECCIÓN
+    # Array de funciones de instalación
+    local install_steps=(
+        "install_essential_packages"
+        "generate_fstab"
+        "configure_system_base"
+        "configure_bootloader"
+    )
+    
+    # Ejecutar pasos de instalación
+    local total_steps=${#install_steps[@]}
+    local current=0
+    
+    for step in "${install_steps[@]}"; do
+        ((current++))
+        echo -e "\n${WHITE}[$current/$total_steps] Ejecutando: ${step//_/ }${RESET}"
+        if ! $step; then
+            handle_error "Fallo en: $step"
+            return 1
+        fi
+        show_progress "$current" "$total_steps"
+    done
     
     return 0
 }

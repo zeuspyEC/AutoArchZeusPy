@@ -133,22 +133,39 @@ show_main_menu() {
     read -r choice
     
     case $choice in
-        1)
-            guided_installation
-            ;;
-        2)
-            automatic_installation
-            ;;
-        3)
-            log "INFO" "Instalación cancelada por el usuario"
-            exit 0
-            ;;
-        *)
-            echo -e "\n${RED}Opción inválida${RESET}"
-            sleep 2
-            show_main_menu
-            ;;
-    esac
+    1)
+        guided_installation
+        ;;
+    2)
+        # INICIO CORRECCIÓN
+        automatic_installation
+        # FIN CORRECCIÓN
+        ;;
+    3)
+        log "INFO" "Instalación cancelada por el usuario"
+        exit 0
+        ;;
+    *)
+        echo -e "\n${RED}Opción inválida${RESET}"
+        sleep 2
+        show_main_menu
+        ;;
+esac
+    automatic_installation() {
+    # INICIO CORRECCIÓN
+    # Detectar automáticamente el sistema operativo existente
+    detect_existing_os
+
+    # Detectar automáticamente el modo de arranque (BIOS o UEFI)
+    if [[ -d "/sys/firmware/efi/efivars" ]]; then
+        BOOT_MODE="UEFI"
+    else
+        BOOT_MODE="BIOS"
+    fi
+
+    # Seleccionar automáticamente un disco compatible sin archivos de Windows
+    select_compatible_disk
+    # FIN CORRECCIÓN
 }
 
 log() {
@@ -1242,6 +1259,7 @@ verify_partitions() {
 # Funciones de Instalación Base
 # ==============================================================================
 
+# Ejemplo de uso de try-catch en la función install_base_system:
 install_base_system() {
     log "INFO" "Iniciando instalación del sistema base"
     
@@ -1249,27 +1267,33 @@ install_base_system() {
     echo -e "${CYAN}║      Instalación del Sistema Base      ║${RESET}"
     echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
     
-    # Array de funciones de instalación
-    local install_steps=(
-        "install_essential_packages"
-        "generate_fstab"
-        "configure_system_base"
-        "configure_bootloader"
-    )
-    
-    # Ejecutar pasos de instalación
-    local total_steps=${#install_steps[@]}
-    local current=0
-    
-    for step in "${install_steps[@]}"; do
-        ((current++))
-        echo -e "\n${WHITE}[$current/$total_steps] Ejecutando: ${step//_/ }${RESET}"
-        if ! $step; then
-            log "ERROR" "Fallo en: $step"
-            return 1
-        fi
-        show_progress "$current" "$total_steps"
-    done
+    # INICIO CORRECCIÓN
+    try {
+        # Array de funciones de instalación
+        local install_steps=(
+            "install_essential_packages"
+            "generate_fstab"
+            "configure_system_base"
+            "configure_bootloader"
+        )
+        
+        # Ejecutar pasos de instalación
+        local total_steps=${#install_steps[@]}
+        local current=0
+        
+        for step in "${install_steps[@]}"; do
+            ((current++))
+            echo -e "\n${WHITE}[$current/$total_steps] Ejecutando: ${step//_/ }${RESET}"
+            if ! $step; then
+                throw "Fallo en: $step"
+            fi
+            show_progress "$current" "$total_steps"
+        done
+    } catch {
+        log "ERROR" "$@"
+        return 1
+    }
+    # FIN CORRECCIÓN
     
     return 0
 }
@@ -1372,17 +1396,17 @@ configure_system_base() {
     log "INFO" "Configurando sistema base"
     
     # Configurar hostname
-    echo -e "\n${WHITE}Configuración del hostname:${RESET}"
-    while true; do
-        echo -ne "${YELLOW}Ingrese el hostname para el sistema:${RESET} "
-        read -r HOSTNAME
-        
-        if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
-            break
-        else
-            echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
-        fi
-    done
+echo -e "\n${WHITE}Configuración del hostname:${RESET}"
+while true; do
+    echo -ne "${YELLOW}Ingrese el hostname para el sistema:${RESET} "
+    read -r HOSTNAME
+    
+    if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
+        break
+    else
+        echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
+    fi
+done
     
     echo "$HOSTNAME" > /mnt/etc/hostname
     

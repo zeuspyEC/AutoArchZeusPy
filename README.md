@@ -13,6 +13,14 @@ pacman -S curl
 3. Download and run the `run.sh` script:
 ```
 curl -L https://raw.githubusercontent.com/zeuspyEC/AutoArchZeusPy/main/run.sh -o run.sh
+```
+4. Use dos2unix to convert file `run.py` to Unix format
+```
+pacman -S dos2unix
+dos2unix run.sh
+```
+5. Run and enjoy
+```
 chmod +x run.sh
 ./run.sh
 ```

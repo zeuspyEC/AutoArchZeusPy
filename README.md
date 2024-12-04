@@ -1,5 +1,5 @@
 # autoArchZ
-This is a autoinstall for Arch users... Can use for Uefi and Bios.
+This is a autoinstall for Arch users... Can use for UEFI and BIOS.
 
 ## Installation
 1. Update the system packages:

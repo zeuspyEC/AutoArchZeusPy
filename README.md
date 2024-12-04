@@ -1,4 +1,4 @@
-# autoArchZ
+# AutoArchZ
 This is a autoinstall for Arch users... Can use for UEFI and BIOS.
 
 ## Installation

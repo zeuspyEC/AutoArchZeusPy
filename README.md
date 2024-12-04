@@ -12,7 +12,7 @@ pacman -S curl
 ```
 3. Download and run the `run.sh` script:
 ```
-echo "curl -L https://raw.githubusercontent.com/zeuspyEC/AutoArchZeusPy/main/run.sh" > run.sh
+curl -L https://raw.githubusercontent.com/zeuspyEC/AutoArchZeusPy/main/run.sh -o run.sh
 chmod +x run.sh
 ./run.sh
 ```

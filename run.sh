@@ -119,6 +119,7 @@ EOF
     echo -e "${PURPLE}      Arch Linux Installer ${BRIGHT_CYAN}v${SCRIPT_VERSION}${RESET}"
     echo -e "${BRIGHT_BLUE}      https://github.com/zeuspyEC${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}\n"
+sleep 3
 }
 show_main_menu() {
     clear
@@ -137,9 +138,7 @@ show_main_menu() {
         guided_installation
         ;;
     2)
-        # INICIO CORRECCIÓN
         automatic_installation
-        # FIN CORRECCIÓN
         ;;
     3)
         log "INFO" "Instalación cancelada por el usuario"
@@ -153,7 +152,6 @@ show_main_menu() {
 esac
 }
     automatic_installation() {
-    # INICIO CORRECCIÓN
     # Detectar automáticamente el sistema operativo existente
     detect_existing_os
 
@@ -166,7 +164,6 @@ esac
 
     # Seleccionar automáticamente un disco compatible sin archivos de Windows
     select_compatible_disk
-    # FIN CORRECCIÓN
 }
 
 log() {
@@ -222,6 +219,7 @@ show_progress() {
 
 # Función para imprimir información del sistema
 print_system_info() {
+    clear
     echo -e "${PURPLE}╔══════════════════════════════════════╗${RESET}"
     echo -e "${PURPLE}║      Información del Sistema         ║${RESET}"
     echo -e "${PURPLE}╚══════════════════════════════════════╝${RESET}\n"
@@ -249,10 +247,13 @@ print_system_info() {
     # Red
     echo -e "\n${WHITE}Red:${RESET}"
     ip -br addr | awk '{printf "  %-10s %-15s %s\n", $1, $2, $3}'
+
+    sleep 4
 }
 
 # Función para ejecutar comandos con logging
 execute_with_log() {
+    clear
     local command=("$@")
     local function_name="${FUNCNAME[1]:-main}"
     
@@ -269,6 +270,7 @@ execute_with_log() {
         log "ERROR" "Salida: $output"
         return $exit_code
     fi
+    sleep 2
 }
 
 # Función de inicialización
@@ -301,6 +303,7 @@ init_script() {
 # ==============================================================================
 
 check_dependencies() {
+    clear
     log "INFO" "Verificando dependencias del sistema"
     
     local deps=(
@@ -389,9 +392,12 @@ check_dependencies() {
     fi
     
     return 0
+
+    sleep 3
 }
 
 install_package() {
+    clear
     local package="$1"
     local max_attempts=3
     local attempt=0
@@ -415,9 +421,12 @@ install_package() {
     echo -e "${YELLOW}¿Desea continuar sin $package? (s/N):${RESET} "
     read -r response
     [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
+
+    sleep 3
 }
 
 check_system_requirements() {
+    clear
     log "INFO" "Verificando requisitos del sistema"
     
     # Detectar si es VM o sistema físico
@@ -478,9 +487,12 @@ check_system_requirements() {
     
     log "SUCCESS" "Sistema cumple con los requisitos mínimos"
     return 0
+
+    sleep 3
 }
 
 verify_disk_space() {
+    clear
     local min_disk=$1
     echo -ne "${WHITE}Espacio en disco:${RESET} "
     
@@ -493,9 +505,11 @@ verify_disk_space() {
     fi
     echo -e "${GREEN}✔ ${total_space}GB${RESET}"
     return 0
+    sleep 2
 }
 
 configure_mirrorlist() {
+    clear
     log "INFO" "Configurando mirrors optimizados"
     
     # Backup del mirrorlist actual
@@ -572,9 +586,12 @@ check_network_connectivity() {
     
     log "SUCCESS" "Conectividad de red verificada"
     return 0
+
+    sleep 3
 }
 
 setup_network_connection() {
+    clear
     log "INFO" "Configurando conexión de red"
     
     echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
@@ -669,9 +686,12 @@ setup_wifi_connection() {
     
     log "ERROR" "No se pudo establecer la conexión WiFi"
     return 1
+
+    sleep 3
 }
 
 setup_ethernet_connection() {
+    clear
     log "INFO" "Configurando conexión Ethernet"
     
     local ethernet_interfaces
@@ -702,12 +722,14 @@ setup_ethernet_connection() {
     
     log "ERROR" "No se pudo establecer conexión Ethernet"
     return 1
+    sleep 3
 }
 
 # ==============================================================================
 # Funciones de Particionamiento y Formateo
 # ==============================================================================
 repair_mount_points() {
+    clear
     local root_part="$1"
     local boot_part="$2"
     
@@ -745,9 +767,11 @@ repair_mount_points() {
     fi
     
     return 0
+    sleep 3
 }
 
 prepare_disk() {
+    clear
     log "INFO" "Iniciando preparación del disco"
     
     # Verificar si hay sistemas operativos instalados
@@ -841,9 +865,12 @@ prepare_disk() {
     fi
     
     return 0
+
+    sleepm 4
 }
 
 show_warning_message() {
+    clear
     echo -e "\n${RED}╔═══════════════════════════ ADVERTENCIA ═══════════════════════════╗${RESET}"
     echo -e "${RED}║  ¡ATENCIÓN! Se borrarán TODOS los datos en el disco seleccionado  ║${RESET}"
     echo -e "${RED}║  Esta operación no se puede deshacer                              ║${RESET}"
@@ -852,10 +879,13 @@ show_warning_message() {
     echo -ne "\n${YELLOW}¿Está seguro que desea continuar? (s/N):${RESET} "
     read -r response
     [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
+
+    sleep 2
 }
 
 # Función para crear particiones GPT
 create_gpt_partitions() {
+    clear
     log "INFO" "Creando particiones GPT"
     
     # Calcular tamaños
@@ -921,10 +951,13 @@ create_gpt_partitions() {
     mount_partitions "$root_part" "$efi_part" || return 1
     
     return 0
+
+    sleep 3
 }
 
 # Función para crear particiones MBR
 create_mbr_partitions() {
+    clear
     log "INFO" "Creando particiones MBR"
     
     # Calcular tamaños
@@ -990,10 +1023,12 @@ create_mbr_partitions() {
     mount_partitions "$root_part" "$boot_part" || return 1
     
     return 0
+    sleep 4
 }
 
 # Función para montar particiones de forma segura
 mount_partitions() {
+    clear
     local root_part="$1"
     local boot_part="$2"
     
@@ -1030,10 +1065,12 @@ mount_partitions() {
     fi
     
     return 0
+    sleep 3
 }
 
 # Función para montar particiones de forma segura
-mount_partitions() {
+mount_partitions() {    
+    clear
     local root_part="$1"
     local boot_part="$2"
     
@@ -1070,6 +1107,7 @@ mount_partitions() {
     fi
     
     return 0
+    sleep 4
 }
 # Función para verificar si un disco está montado
 is_disk_mounted() {
@@ -1080,6 +1118,7 @@ is_disk_mounted() {
 
 # Función para desmontar todas las particiones de un disco
 unmount_all() {
+    clear
     local disk="$1"
     local partitions
     
@@ -1096,8 +1135,10 @@ unmount_all() {
     done
     
     return 0
+    sleep 3
 }
 format_and_mount_partitions() {
+    clear
     local root_part="$1"
     local boot_part="$2"
     local swap_part="$3"
@@ -1176,9 +1217,11 @@ format_and_mount_partitions() {
     
     log "SUCCESS" "Particiones formateadas y montadas correctamente"
     return 0
+    sleep 3
 }
 
 verify_partitions() {
+    clear
     log "INFO" "Verificando particiones"
     
     echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
@@ -1251,9 +1294,10 @@ verify_partitions() {
     # Mostrar estructura final
     echo -e "\n${WHITE}Estructura final de particiones:${RESET}"
     lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E '^|/mnt' | sed 's/^/  /'
-    
+    sleep 2
     log "SUCCESS" "Verificación de particiones completada"
     return 0
+    sleep 3
 }
 
 # ==============================================================================
@@ -1267,6 +1311,7 @@ handle_error() {
 }
 
 install_base_system() {
+    clear
     log "INFO" "Iniciando instalación del sistema base"
     
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
@@ -1296,9 +1341,11 @@ install_base_system() {
     done
     
     return 0
+    sleep 3
 }
 
 install_essential_packages() {
+    clear
     log "INFO" "Instalando paquetes esenciales"
     
     # Verificar conexión antes de instalar
@@ -1361,9 +1408,11 @@ install_essential_packages() {
     
     log "SUCCESS" "Paquetes base instalados correctamente"
     return 0
+    sleep 3
 }
 
 generate_fstab() {
+    clear
     log "INFO" "Generando fstab"
     
     echo -ne "${CYAN}Generando /etc/fstab...${RESET} "
@@ -1390,9 +1439,11 @@ generate_fstab() {
     
     log "SUCCESS" "fstab generado correctamente"
     return 0
+    sleep 2
 }
 
 configure_system_base() {
+    clear
     log "INFO" "Configurando sistema base"
     
     # Configurar hostname
@@ -1622,12 +1673,14 @@ EOF
     
     log "SUCCESS" "Bootloader instalado y configurado correctamente"
     return 0
+    sleep 3
 }
 
 # ==============================================================================
 # Funciones de Post-instalación y Temas
 # ==============================================================================
 install_desktop_environment() {
+    clear
     log "INFO" "Instalando entorno de escritorio"
     
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
@@ -1658,9 +1711,11 @@ install_desktop_environment() {
     
     log "SUCCESS" "Entorno de escritorio instalado correctamente"
     return 0
+    sleep 3
 }
 
 install_packages_for() {
+    clear
     local env=$1
     local packages=()
     
@@ -1715,9 +1770,11 @@ install_packages_for() {
     fi
     
     return 0
+    sleep 3
 }
 
 configure_display_manager() {
+    clear
     log "INFO" "Configurando display manager"
     
     local display_manager
@@ -1738,9 +1795,11 @@ configure_display_manager() {
     
     log "SUCCESS" "Display manager configurado correctamente"
     return 0
+    sleep 2
 }
 
 configure_zeuspy_theme() {
+    clear
     log "INFO" "Configurando tema personalizado ZeuspyEC"
     
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
@@ -1893,6 +1952,7 @@ generate_installation_report() {
     } > "$report_file"
     
     log "SUCCESS" "Reporte generado en $report_file"
+    sleep 3
 }
 
 cleanup() {

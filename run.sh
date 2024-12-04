@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# ZeuspyEC Arch Linux Installer
-# Version: 3.0.2
-# Autor: ZeuspyEC
-# GitHub: https://github.com/zeuspyEC
+# ZeuspyEC Arch Linux Installer - Versión Corregida
+# Version: 3.0.3
 # ==============================================================================
 
-# Habilitar modo estricto
+# Modo estricto y manejo de errores mejorado
 set -euo pipefail
 IFS=$'\n\t'
 
-set +e  # No terminar en errores
+# Manejo de errores global
 trap 'error_handler $? $LINENO $BASH_LINENO "$BASH_COMMAND" $(printf "::%s" ${FUNCNAME[@]:-})' ERR
 
 # Colores y estilos mejorados
@@ -52,14 +50,16 @@ declare -gr INFO="${BOLD}${CYAN}"
 declare -gr HEADER="${BOLD}${PURPLE}"
 declare -gr ACCENT="${BOLD}${BLUE}"
 
-# Variables globales
-declare -g SCRIPT_VERSION="3.0.2"
+# Variables globales fundamentales
+declare -gr SCRIPT_VERSION="3.0.3"
 declare -g BOOT_MODE=""
 declare -g TARGET_DISK=""
 declare -g HOSTNAME=""
 declare -g USERNAME=""
-declare -g TIMEZONE=""
-declare -g THEME_SELECTED=""
+declare -g TIMEZONE="America/Guayaquil"  # Default timezone
+declare -g ROOT_PASSWORD=""
+declare -g USER_PASSWORD=""
+
 
 # Archivos de log
 declare -g LOG_FILE="/tmp/zeuspyec_installer.log"
@@ -152,18 +152,130 @@ show_main_menu() {
 esac
 }
     automatic_installation() {
-    # Detectar automáticamente el sistema operativo existente
-    detect_existing_os
-
-    # Detectar automáticamente el modo de arranque (BIOS o UEFI)
+    log "INFO" "Iniciando instalación automática"
+    
+    # 1. Detectar modo de arranque
+    detect_boot_mode() {
     if [[ -d "/sys/firmware/efi/efivars" ]]; then
         BOOT_MODE="UEFI"
+        log "INFO" "Detectado modo UEFI"
     else
         BOOT_MODE="BIOS"
+        log "INFO" "Detectado modo BIOS Legacy"
     fi
+}
+    
+    # 2. Verificar y configurar red
+    if ! check_network_connectivity; then
+        setup_network_connection
+    fi
+    
+    # 3. Detectar y seleccionar disco automáticamente
+    select_target_disk
+    
+    # 4. Solicitar información mínima necesaria
+    prompt_required_info
+    
+    # 5. Preparar disco
+    prepare_disk_auto
+    
+    # 6. Instalar sistema base
+    install_base_system_auto
+    
+    # 7. Configurar sistema
+    configure_system_auto
+    
+    # 8. Configurar bootloader
+    configure_bootloader_auto
+    
+    # 9. Configurar tema ZeuspyEC
+    configure_zeuspy_theme_auto
+    
+    # 10. Finalizar instalación
+    finalize_installation_auto
+}
 
-    # Seleccionar automáticamente un disco compatible sin archivos de Windows
-    select_compatible_disk
+# Función mejorada para seleccionar disco automáticamente
+select_target_disk() {
+    # Obtener el disco más grande disponible que no sea USB
+    local biggest_disk
+    biggest_disk=$(lsblk -dpnlo NAME,SIZE,TRAN | grep -v "usb" | sort -k2 -rh | head -n1 | cut -d' ' -f1)
+    
+    if [[ -z "$biggest_disk" ]]; then
+        log "ERROR" "No se encontró un disco válido para la instalación"
+        exit 1
+    fi
+    
+    TARGET_DISK="$biggest_disk"
+    log "INFO" "Seleccionado disco: $TARGET_DISK"
+}
+
+# Función para solicitar información mínima necesaria
+prompt_required_info() {
+    # Hostname
+    while true; do
+        echo -ne "\n${YELLOW}Ingrese hostname para el sistema:${RESET} "
+        read -r HOSTNAME
+        if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
+            break
+        fi
+        echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
+    done
+
+    # Username
+    while true; do
+        echo -ne "\n${YELLOW}Ingrese nombre de usuario:${RESET} "
+        read -r USERNAME
+        if [[ "$USERNAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            break
+        fi
+        echo -e "${RED}Nombre inválido. Use letras minúsculas, números y guiones${RESET}"
+    done
+
+    # Passwords
+    while true; do
+        echo -ne "\n${YELLOW}Ingrese contraseña root:${RESET} "
+        read -rs ROOT_PASSWORD
+        echo
+        echo -ne "${YELLOW}Confirme contraseña root:${RESET} "
+        read -rs confirm_root
+        echo
+        
+        if [[ "$ROOT_PASSWORD" == "$confirm_root" ]]; then
+            break
+        fi
+        echo -e "${RED}Las contraseñas no coinciden${RESET}"
+    done
+
+    while true; do
+        echo -ne "\n${YELLOW}Ingrese contraseña para $USERNAME:${RESET} "
+        read -rs USER_PASSWORD
+        echo
+        echo -ne "${YELLOW}Confirme contraseña de usuario:${RESET} "
+        read -rs confirm_user
+        echo
+        
+        if [[ "$USER_PASSWORD" == "$confirm_user" ]]; then
+            break
+        fi
+        echo -e "${RED}Las contraseñas no coinciden${RESET}"
+    done
+}
+
+# Función mejorada para preparar disco automáticamente
+prepare_disk_auto() {
+    log "INFO" "Preparando disco $TARGET_DISK"
+    
+    # Desmontar particiones si existen
+    umount -R /mnt 2>/dev/null || true
+    swapoff -a 2>/dev/null || true
+    
+    # Crear esquema de particiones según modo de arranque
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        create_uefi_partitions
+    else
+        create_bios_partitions
+    fi
 }
 
 log() {

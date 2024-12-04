@@ -1445,52 +1445,36 @@ generate_fstab() {
 configure_system_base() {
     clear
     log "INFO" "Configurando sistema base"
-    
-    # Configurar hostname
-echo -e "\n${WHITE}Configuración del hostname:${RESET}"
-while true; do
-    echo -ne "${YELLOW}Ingrese el hostname para el sistema:${RESET} "
-    read -r HOSTNAME
-    
-    if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
-        break
-    else
-        echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
-    fi
-done
-    
+
+    # Configuración del hostname y hosts
+    echo -e "\n${WHITE}Configuración del hostname:${RESET}"
+    while true; do
+        echo -ne "${YELLOW}Ingrese el hostname para el sistema:${RESET} "
+        read -r HOSTNAME
+        if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
+            break
+        else
+            echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
+        fi
+    done
     echo "$HOSTNAME" > /mnt/etc/hostname
-    
-    # Configurar hosts
     cat > /mnt/etc/hosts <<EOF
 127.0.0.1   localhost
 ::1         localhost
 127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
 EOF
-    
-    # Configurar zona horaria
+
+    # Configuración de zona horaria
     echo -e "\n${WHITE}Configuración de zona horaria:${RESET}"
-    local zones=(
-        "America/Guayaquil"    # Ecuador
-        "America/Lima"         # Perú
-        "America/Bogota"       # Colombia
-        "Europe/Madrid"        # España
-        "Otra"
-    )
-    
+    local zones=("America/Guayaquil" "America/Lima" "America/Bogota" "Europe/Madrid" "Otra")
     PS3=$'\n'"${YELLOW}Seleccione zona horaria:${RESET} "
     select zone in "${zones[@]}"; do
         case $zone in
             "Otra")
-                # Mostrar todas las zonas disponibles
-                local all_zones
                 mapfile -t all_zones < <(find /usr/share/zoneinfo -type f -not -path '*/posix/*' -not -path '*/right/*' | sed 's|/usr/share/zoneinfo/||')
-                
                 PS3=$'\n'"${YELLOW}Seleccione zona horaria:${RESET} "
                 select TIMEZONE in "${all_zones[@]}"; do
-                    if [[ -n "$TIMEZONE" ]]; then
-                        break 2
-                    fi
+                    [[ -n "$TIMEZONE" ]] && break 2
                 done
                 ;;
             *)
@@ -1499,61 +1483,43 @@ EOF
                 ;;
         esac
     done
-    
-    # Configurar zona horaria
     arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
     arch-chroot /mnt hwclock --systohc
-    
-    # Configurar locale
+
+    # Configuración de locale
     echo -e "\n${WHITE}Configurando locale...${RESET}"
-    sed -i 's/#\(en_US.UTF-8\)/\1/' /mnt/etc/locale.gen
-    sed -i 's/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
-    
+    sed -i 's/#\(en_US.UTF-8\)/\1/; s/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
     arch-chroot /mnt locale-gen
     echo "LANG=es_ES.UTF-8" > /mnt/etc/locale.conf
     echo "KEYMAP=es" > /mnt/etc/vconsole.conf
-    
-    # Configurar usuarios
+
+    # Configuración de usuarios
     echo -e "\n${WHITE}Configuración de usuarios:${RESET}"
-    
-    # Root password
     echo -e "\n${CYAN}Configurando contraseña de root${RESET}"
     while ! arch-chroot /mnt passwd; do
         echo -e "${RED}Error al configurar contraseña. Intente nuevamente${RESET}"
     done
-    
-    # Usuario normal
+
     while true; do
         echo -ne "\n${YELLOW}Ingrese nombre para el nuevo usuario:${RESET} "
         read -r USERNAME
-        
         if [[ "$USERNAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
             break
         else
             echo -e "${RED}Nombre inválido. Use letras minúsculas, números y guiones${RESET}"
         fi
     done
-    
-    # Crear usuario y grupos
     arch-chroot /mnt useradd -m -G wheel,audio,video,storage,optical -s /bin/bash "$USERNAME"
-    
     echo -e "\n${CYAN}Configurando contraseña para $USERNAME${RESET}"
     while ! arch-chroot /mnt passwd "$USERNAME"; do
         echo -e "${RED}Error al configurar contraseña. Intente nuevamente${RESET}"
     done
-    
-    # Configurar sudo
     echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
     chmod 440 /mnt/etc/sudoers.d/wheel
-    
+
     # Habilitar servicios básicos
     echo -e "\n${WHITE}Habilitando servicios...${RESET}"
-    local services=(
-        "NetworkManager"
-        "fstrim.timer"
-        "systemd-timesyncd"
-    )
-    
+    local services=("NetworkManager" "fstrim.timer" "systemd-timesyncd")
     for service in "${services[@]}"; do
         echo -ne "${CYAN}Habilitando $service...${RESET} "
         if arch-chroot /mnt systemctl enable "$service" &>/dev/null; then
@@ -1563,7 +1529,7 @@ EOF
             log "WARN" "No se pudo habilitar $service"
         fi
     done
-    
+
     log "SUCCESS" "Sistema base configurado correctamente"
     return 0
 }

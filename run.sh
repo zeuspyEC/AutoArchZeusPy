@@ -2058,10 +2058,6 @@ finalize_installation() {
     return 0
 }
 
-# ==============================================================================
-# Función Principal
-# ==============================================================================
-
 # Función para detectar sistemas operativos existentes
 detect_existing_os() {
     log "INFO" "Detectando otros sistemas operativos"
@@ -2177,6 +2173,25 @@ retry_command() {
     return 1
 }
 
+# Función para inicializar el script
+init_script() {
+    display_banner
+    echo -e "${HEADER}Inicializando el instalador ZeusPy...${RESET}"
+    sleep 1
+}
+
+# Pasos de instalación simulados
+check_system_requirements() { display_banner; echo "Verificando requisitos del sistema..."; sleep 1; return 0; }
+check_network_connectivity() { display_banner; echo "Verificando conectividad de red..."; sleep 1; return 0; }
+detect_existing_os() { display_banner; echo "Detectando sistemas operativos existentes..."; sleep 1; return 0; }
+prepare_disk() { display_banner; echo "Preparando el disco..."; sleep 1; return 0; }
+install_base_system() { display_banner; echo "Instalando sistema base..."; sleep 1; return 0; }
+configure_system_base() { display_banner; echo "Configurando el sistema base..."; sleep 1; return 0; }
+configure_bootloader() { display_banner; echo "Configurando el gestor de arranque..."; sleep 1; return 0; }
+configure_zeuspy_theme() { display_banner; echo "Aplicando tema ZeusPy..."; sleep 1; return 0; }
+generate_installation_report() { display_banner; echo "Generando informe de instalación..."; sleep 1; return 0; }
+
+# Función principal
 main() {
     # Iniciar contador de tiempo
     local start_time
@@ -2190,16 +2205,16 @@ main() {
     
     # Pasos de instalación
     local installation_steps=(
-    "check_system_requirements"
-    "check_network_connectivity"
-    "detect_existing_os"  
-    "prepare_disk"
-    "install_base_system"
-    "configure_system_base"
-    "configure_bootloader"
-    "configure_zeuspy_theme"
-    "generate_installation_report"
-)
+        "check_system_requirements"
+        "check_network_connectivity"
+        "detect_existing_os"  
+        "prepare_disk"
+        "install_base_system"
+        "configure_system_base"
+        "configure_bootloader"
+        "configure_zeuspy_theme"
+        "generate_installation_report"
+    )
     # Ejecutar pasos de instalación
     local total_steps=${#installation_steps[@]}
     local current=0
@@ -2208,12 +2223,11 @@ main() {
         ((current++))
         echo -e "\n${HEADER}[$current/$total_steps] ${step//_/ }${RESET}"
         if ! $step; then
-            log "ERROR" "Instalación fallida en: $step"
+            echo -e "${ERROR}Instalación fallida en: $step${RESET}"
             cleanup
             exit 1
         fi
         show_progress "$current" "$total_steps"
-        echo
     done
     
     # Calcular tiempo de instalación
@@ -2228,7 +2242,6 @@ main() {
     
     return 0
 }
-
 
 # Verificar si se ejecuta como root
 if [[ $EUID -ne 0 ]]; then

@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# ZeuspyEC Arch Linux Installer - Versión Corregida
-# Version: 3.0.3
+# ZeuspyEC Arch Linux Installer
+# Version: 3.0.2
+# Autor: ZeuspyEC
+# GitHub: https://github.com/zeuspyEC
 # ==============================================================================
 
-# Modo estricto y manejo de errores mejorado
+# Habilitar modo estricto
 set -euo pipefail
 IFS=$'\n\t'
 
-# Manejo de errores global
+set +e  # No terminar en errores
 trap 'error_handler $? $LINENO $BASH_LINENO "$BASH_COMMAND" $(printf "::%s" ${FUNCNAME[@]:-})' ERR
 
 # Colores y estilos mejorados
@@ -50,16 +52,14 @@ declare -gr INFO="${BOLD}${CYAN}"
 declare -gr HEADER="${BOLD}${PURPLE}"
 declare -gr ACCENT="${BOLD}${BLUE}"
 
-# Variables globales fundamentales
-declare -gr SCRIPT_VERSION="3.0.3"
+# Variables globales
+declare -g SCRIPT_VERSION="3.0.2"
 declare -g BOOT_MODE=""
 declare -g TARGET_DISK=""
 declare -g HOSTNAME=""
 declare -g USERNAME=""
-declare -g TIMEZONE="America/Guayaquil"  # Default timezone
-declare -g ROOT_PASSWORD=""
-declare -g USER_PASSWORD=""
-
+declare -g TIMEZONE=""
+declare -g THEME_SELECTED=""
 
 # Archivos de log
 declare -g LOG_FILE="/tmp/zeuspyec_installer.log"
@@ -100,6 +100,7 @@ declare -g BSPWM_PACKAGES=(
     "neofetch"
 )
 
+# Banner mejorado
 display_banner() {
     clear
     echo -e "${BLUE}"
@@ -119,165 +120,9 @@ EOF
     echo -e "${PURPLE}      Arch Linux Installer ${BRIGHT_CYAN}v${SCRIPT_VERSION}${RESET}"
     echo -e "${BRIGHT_BLUE}      https://github.com/zeuspyEC${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}\n"
-sleep 3
-}
-show_main_menu() {
-    clear
-    display_banner
-    
-    echo -e "\n${CYAN}Seleccione el tipo de instalación:${RESET}\n"
-    echo -e "  ${CYAN}1)${RESET} ${GREEN}Instalación guiada${RESET}"
-    echo -e "  ${CYAN}2)${RESET} ${YELLOW}Instalación automática${RESET}"
-    echo -e "  ${CYAN}3)${RESET} ${RED}Salir${RESET}\n"
-    
-    echo -ne "${YELLOW}Ingrese su elección (1-3):${RESET} "
-    read -r choice
-    
-    case $choice in
-    1)
-        guided_installation
-        ;;
-    2)
-        automatic_installation
-        ;;
-    3)
-        log "INFO" "Instalación cancelada por el usuario"
-        exit 0
-        ;;
-    *)
-        echo -e "\n${RED}Opción inválida${RESET}"
-        sleep 2
-        show_main_menu
-        ;;
-esac
-}
-    automatic_installation() {
-    log "INFO" "Iniciando instalación automática"
-    
-    # 1. Detectar modo de arranque
-    detect_boot_mode() {
-    if [[ -d "/sys/firmware/efi/efivars" ]]; then
-        BOOT_MODE="UEFI"
-        log "INFO" "Detectado modo UEFI"
-    else
-        BOOT_MODE="BIOS"
-        log "INFO" "Detectado modo BIOS Legacy"
-    fi
-}
-    
-    # 2. Verificar y configurar red
-    if ! check_network_connectivity; then
-        setup_network_connection
-    fi
-    
-    # 3. Detectar y seleccionar disco automáticamente
-    select_target_disk
-    
-    # 4. Solicitar información mínima necesaria
-    prompt_required_info
-    
-    # 5. Preparar disco
-    prepare_disk_auto
-    
-    # 6. Instalar sistema base
-    install_base_system_auto
-    
-    # 7. Configurar sistema
-    configure_system_auto
-    
-    # 8. Configurar bootloader
-    configure_bootloader_auto
-    
-    # 9. Configurar tema ZeuspyEC
-    configure_zeuspy_theme_auto
-    
-    # 10. Finalizar instalación
-    finalize_installation_auto
 }
 
-# Función mejorada para seleccionar disco automáticamente
-select_target_disk() {
-    # Obtener el disco más grande disponible que no sea USB
-    local biggest_disk
-    biggest_disk=$(lsblk -dpnlo NAME,SIZE,TRAN | grep -v "usb" | sort -k2 -rh | head -n1 | cut -d' ' -f1)
-    
-    if [[ -z "$biggest_disk" ]]; then
-        log "ERROR" "No se encontró un disco válido para la instalación"
-        exit 1
-    fi
-    
-    TARGET_DISK="$biggest_disk"
-    log "INFO" "Seleccionado disco: $TARGET_DISK"
-}
-
-# Función para solicitar información mínima necesaria
-prompt_required_info() {
-    # Hostname
-    while true; do
-        echo -ne "\n${YELLOW}Ingrese hostname para el sistema:${RESET} "
-        read -r HOSTNAME
-        if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
-            break
-        fi
-        echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
-    done
-
-    # Username
-    while true; do
-        echo -ne "\n${YELLOW}Ingrese nombre de usuario:${RESET} "
-        read -r USERNAME
-        if [[ "$USERNAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
-            break
-        fi
-        echo -e "${RED}Nombre inválido. Use letras minúsculas, números y guiones${RESET}"
-    done
-
-    # Passwords
-    while true; do
-        echo -ne "\n${YELLOW}Ingrese contraseña root:${RESET} "
-        read -rs ROOT_PASSWORD
-        echo
-        echo -ne "${YELLOW}Confirme contraseña root:${RESET} "
-        read -rs confirm_root
-        echo
-        
-        if [[ "$ROOT_PASSWORD" == "$confirm_root" ]]; then
-            break
-        fi
-        echo -e "${RED}Las contraseñas no coinciden${RESET}"
-    done
-
-    while true; do
-        echo -ne "\n${YELLOW}Ingrese contraseña para $USERNAME:${RESET} "
-        read -rs USER_PASSWORD
-        echo
-        echo -ne "${YELLOW}Confirme contraseña de usuario:${RESET} "
-        read -rs confirm_user
-        echo
-        
-        if [[ "$USER_PASSWORD" == "$confirm_user" ]]; then
-            break
-        fi
-        echo -e "${RED}Las contraseñas no coinciden${RESET}"
-    done
-}
-
-# Función mejorada para preparar disco automáticamente
-prepare_disk_auto() {
-    log "INFO" "Preparando disco $TARGET_DISK"
-    
-    # Desmontar particiones si existen
-    umount -R /mnt 2>/dev/null || true
-    swapoff -a 2>/dev/null || true
-    
-    # Crear esquema de particiones según modo de arranque
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        create_uefi_partitions
-    else
-        create_bios_partitions
-    fi
-}
-
+# Función de logging mejorada
 log() {
     local level="$1"
     shift
@@ -331,7 +176,6 @@ show_progress() {
 
 # Función para imprimir información del sistema
 print_system_info() {
-    clear
     echo -e "${PURPLE}╔══════════════════════════════════════╗${RESET}"
     echo -e "${PURPLE}║      Información del Sistema         ║${RESET}"
     echo -e "${PURPLE}╚══════════════════════════════════════╝${RESET}\n"
@@ -359,13 +203,10 @@ print_system_info() {
     # Red
     echo -e "\n${WHITE}Red:${RESET}"
     ip -br addr | awk '{printf "  %-10s %-15s %s\n", $1, $2, $3}'
-
-    sleep 4
 }
 
 # Función para ejecutar comandos con logging
 execute_with_log() {
-    clear
     local command=("$@")
     local function_name="${FUNCNAME[1]:-main}"
     
@@ -382,7 +223,6 @@ execute_with_log() {
         log "ERROR" "Salida: $output"
         return $exit_code
     fi
-    sleep 2
 }
 
 # Función de inicialización
@@ -415,7 +255,6 @@ init_script() {
 # ==============================================================================
 
 check_dependencies() {
-    clear
     log "INFO" "Verificando dependencias del sistema"
     
     local deps=(
@@ -504,12 +343,9 @@ check_dependencies() {
     fi
     
     return 0
-
-    sleep 3
 }
 
 install_package() {
-    clear
     local package="$1"
     local max_attempts=3
     local attempt=0
@@ -533,12 +369,9 @@ install_package() {
     echo -e "${YELLOW}¿Desea continuar sin $package? (s/N):${RESET} "
     read -r response
     [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
-
-    sleep 3
 }
 
 check_system_requirements() {
-    clear
     log "INFO" "Verificando requisitos del sistema"
     
     # Detectar si es VM o sistema físico
@@ -599,12 +432,9 @@ check_system_requirements() {
     
     log "SUCCESS" "Sistema cumple con los requisitos mínimos"
     return 0
-
-    sleep 3
 }
 
 verify_disk_space() {
-    clear
     local min_disk=$1
     echo -ne "${WHITE}Espacio en disco:${RESET} "
     
@@ -617,11 +447,9 @@ verify_disk_space() {
     fi
     echo -e "${GREEN}✔ ${total_space}GB${RESET}"
     return 0
-    sleep 2
 }
 
 configure_mirrorlist() {
-    clear
     log "INFO" "Configurando mirrors optimizados"
     
     # Backup del mirrorlist actual
@@ -698,12 +526,9 @@ check_network_connectivity() {
     
     log "SUCCESS" "Conectividad de red verificada"
     return 0
-
-    sleep 3
 }
 
 setup_network_connection() {
-    clear
     log "INFO" "Configurando conexión de red"
     
     echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
@@ -798,12 +623,9 @@ setup_wifi_connection() {
     
     log "ERROR" "No se pudo establecer la conexión WiFi"
     return 1
-
-    sleep 3
 }
 
 setup_ethernet_connection() {
-    clear
     log "INFO" "Configurando conexión Ethernet"
     
     local ethernet_interfaces
@@ -834,14 +656,12 @@ setup_ethernet_connection() {
     
     log "ERROR" "No se pudo establecer conexión Ethernet"
     return 1
-    sleep 3
 }
 
 # ==============================================================================
 # Funciones de Particionamiento y Formateo
 # ==============================================================================
 repair_mount_points() {
-    clear
     local root_part="$1"
     local boot_part="$2"
     
@@ -879,11 +699,9 @@ repair_mount_points() {
     fi
     
     return 0
-    sleep 3
 }
 
 prepare_disk() {
-    clear
     log "INFO" "Iniciando preparación del disco"
     
     # Verificar si hay sistemas operativos instalados
@@ -977,12 +795,9 @@ prepare_disk() {
     fi
     
     return 0
-
-    sleepm 4
 }
 
 show_warning_message() {
-    clear
     echo -e "\n${RED}╔═══════════════════════════ ADVERTENCIA ═══════════════════════════╗${RESET}"
     echo -e "${RED}║  ¡ATENCIÓN! Se borrarán TODOS los datos en el disco seleccionado  ║${RESET}"
     echo -e "${RED}║  Esta operación no se puede deshacer                              ║${RESET}"
@@ -991,13 +806,10 @@ show_warning_message() {
     echo -ne "\n${YELLOW}¿Está seguro que desea continuar? (s/N):${RESET} "
     read -r response
     [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
-
-    sleep 2
 }
 
 # Función para crear particiones GPT
 create_gpt_partitions() {
-    clear
     log "INFO" "Creando particiones GPT"
     
     # Calcular tamaños
@@ -1063,13 +875,10 @@ create_gpt_partitions() {
     mount_partitions "$root_part" "$efi_part" || return 1
     
     return 0
-
-    sleep 3
 }
 
 # Función para crear particiones MBR
 create_mbr_partitions() {
-    clear
     log "INFO" "Creando particiones MBR"
     
     # Calcular tamaños
@@ -1135,12 +944,10 @@ create_mbr_partitions() {
     mount_partitions "$root_part" "$boot_part" || return 1
     
     return 0
-    sleep 4
 }
 
 # Función para montar particiones de forma segura
 mount_partitions() {
-    clear
     local root_part="$1"
     local boot_part="$2"
     
@@ -1177,12 +984,10 @@ mount_partitions() {
     fi
     
     return 0
-    sleep 3
 }
 
 # Función para montar particiones de forma segura
-mount_partitions() {    
-    clear
+mount_partitions() {
     local root_part="$1"
     local boot_part="$2"
     
@@ -1219,7 +1024,6 @@ mount_partitions() {
     fi
     
     return 0
-    sleep 4
 }
 # Función para verificar si un disco está montado
 is_disk_mounted() {
@@ -1230,7 +1034,6 @@ is_disk_mounted() {
 
 # Función para desmontar todas las particiones de un disco
 unmount_all() {
-    clear
     local disk="$1"
     local partitions
     
@@ -1247,10 +1050,8 @@ unmount_all() {
     done
     
     return 0
-    sleep 3
 }
 format_and_mount_partitions() {
-    clear
     local root_part="$1"
     local boot_part="$2"
     local swap_part="$3"
@@ -1329,11 +1130,9 @@ format_and_mount_partitions() {
     
     log "SUCCESS" "Particiones formateadas y montadas correctamente"
     return 0
-    sleep 3
 }
 
 verify_partitions() {
-    clear
     log "INFO" "Verificando particiones"
     
     echo -e "\n${CYAN}╔══════════════════════════════════════╗${RESET}"
@@ -1406,24 +1205,16 @@ verify_partitions() {
     # Mostrar estructura final
     echo -e "\n${WHITE}Estructura final de particiones:${RESET}"
     lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E '^|/mnt' | sed 's/^/  /'
-    sleep 2
+    
     log "SUCCESS" "Verificación de particiones completada"
     return 0
-    sleep 3
 }
 
 # ==============================================================================
 # Funciones de Instalación Base
 # ==============================================================================
 
-# Función para manejar errores
-handle_error() {
-    log "ERROR" "$1"
-    return 1
-}
-
 install_base_system() {
-    clear
     log "INFO" "Iniciando instalación del sistema base"
     
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
@@ -1446,18 +1237,16 @@ install_base_system() {
         ((current++))
         echo -e "\n${WHITE}[$current/$total_steps] Ejecutando: ${step//_/ }${RESET}"
         if ! $step; then
-            handle_error "Fallo en: $step"
+            log "ERROR" "Fallo en: $step"
             return 1
         fi
         show_progress "$current" "$total_steps"
     done
     
     return 0
-    sleep 3
 }
 
 install_essential_packages() {
-    clear
     log "INFO" "Instalando paquetes esenciales"
     
     # Verificar conexión antes de instalar
@@ -1520,11 +1309,9 @@ install_essential_packages() {
     
     log "SUCCESS" "Paquetes base instalados correctamente"
     return 0
-    sleep 3
 }
 
 generate_fstab() {
-    clear
     log "INFO" "Generando fstab"
     
     echo -ne "${CYAN}Generando /etc/fstab...${RESET} "
@@ -1551,42 +1338,56 @@ generate_fstab() {
     
     log "SUCCESS" "fstab generado correctamente"
     return 0
-    sleep 2
 }
 
 configure_system_base() {
-    clear
     log "INFO" "Configurando sistema base"
-
-    # Configuración del hostname y hosts
+    
+    # Configurar hostname
     echo -e "\n${WHITE}Configuración del hostname:${RESET}"
     while true; do
         echo -ne "${YELLOW}Ingrese el hostname para el sistema:${RESET} "
         read -r HOSTNAME
+        
         if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
             break
         else
             echo -e "${RED}Hostname inválido. Use solo letras, números y guiones${RESET}"
         fi
     done
+    
     echo "$HOSTNAME" > /mnt/etc/hostname
+    
+    # Configurar hosts
     cat > /mnt/etc/hosts <<EOF
 127.0.0.1   localhost
 ::1         localhost
 127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
 EOF
-
-    # Configuración de zona horaria
+    
+    # Configurar zona horaria
     echo -e "\n${WHITE}Configuración de zona horaria:${RESET}"
-    local zones=("America/Guayaquil" "America/Lima" "America/Bogota" "Europe/Madrid" "Otra")
+    local zones=(
+        "America/Guayaquil"    # Ecuador
+        "America/Lima"         # Perú
+        "America/Bogota"       # Colombia
+        "Europe/Madrid"        # España
+        "Otra"
+    )
+    
     PS3=$'\n'"${YELLOW}Seleccione zona horaria:${RESET} "
     select zone in "${zones[@]}"; do
         case $zone in
             "Otra")
+                # Mostrar todas las zonas disponibles
+                local all_zones
                 mapfile -t all_zones < <(find /usr/share/zoneinfo -type f -not -path '*/posix/*' -not -path '*/right/*' | sed 's|/usr/share/zoneinfo/||')
+                
                 PS3=$'\n'"${YELLOW}Seleccione zona horaria:${RESET} "
                 select TIMEZONE in "${all_zones[@]}"; do
-                    [[ -n "$TIMEZONE" ]] && break 2
+                    if [[ -n "$TIMEZONE" ]]; then
+                        break 2
+                    fi
                 done
                 ;;
             *)
@@ -1595,43 +1396,61 @@ EOF
                 ;;
         esac
     done
+    
+    # Configurar zona horaria
     arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
     arch-chroot /mnt hwclock --systohc
-
-    # Configuración de locale
+    
+    # Configurar locale
     echo -e "\n${WHITE}Configurando locale...${RESET}"
-    sed -i 's/#\(en_US.UTF-8\)/\1/; s/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
+    sed -i 's/#\(en_US.UTF-8\)/\1/' /mnt/etc/locale.gen
+    sed -i 's/#\(es_ES.UTF-8\)/\1/' /mnt/etc/locale.gen
+    
     arch-chroot /mnt locale-gen
     echo "LANG=es_ES.UTF-8" > /mnt/etc/locale.conf
     echo "KEYMAP=es" > /mnt/etc/vconsole.conf
-
-    # Configuración de usuarios
+    
+    # Configurar usuarios
     echo -e "\n${WHITE}Configuración de usuarios:${RESET}"
+    
+    # Root password
     echo -e "\n${CYAN}Configurando contraseña de root${RESET}"
     while ! arch-chroot /mnt passwd; do
         echo -e "${RED}Error al configurar contraseña. Intente nuevamente${RESET}"
     done
-
+    
+    # Usuario normal
     while true; do
         echo -ne "\n${YELLOW}Ingrese nombre para el nuevo usuario:${RESET} "
         read -r USERNAME
+        
         if [[ "$USERNAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
             break
         else
             echo -e "${RED}Nombre inválido. Use letras minúsculas, números y guiones${RESET}"
         fi
     done
+    
+    # Crear usuario y grupos
     arch-chroot /mnt useradd -m -G wheel,audio,video,storage,optical -s /bin/bash "$USERNAME"
+    
     echo -e "\n${CYAN}Configurando contraseña para $USERNAME${RESET}"
     while ! arch-chroot /mnt passwd "$USERNAME"; do
         echo -e "${RED}Error al configurar contraseña. Intente nuevamente${RESET}"
     done
+    
+    # Configurar sudo
     echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
     chmod 440 /mnt/etc/sudoers.d/wheel
-
+    
     # Habilitar servicios básicos
     echo -e "\n${WHITE}Habilitando servicios...${RESET}"
-    local services=("NetworkManager" "fstrim.timer" "systemd-timesyncd")
+    local services=(
+        "NetworkManager"
+        "fstrim.timer"
+        "systemd-timesyncd"
+    )
+    
     for service in "${services[@]}"; do
         echo -ne "${CYAN}Habilitando $service...${RESET} "
         if arch-chroot /mnt systemctl enable "$service" &>/dev/null; then
@@ -1641,7 +1460,7 @@ EOF
             log "WARN" "No se pudo habilitar $service"
         fi
     done
-
+    
     log "SUCCESS" "Sistema base configurado correctamente"
     return 0
 }
@@ -1751,133 +1570,13 @@ EOF
     
     log "SUCCESS" "Bootloader instalado y configurado correctamente"
     return 0
-    sleep 3
 }
 
 # ==============================================================================
 # Funciones de Post-instalación y Temas
 # ==============================================================================
-install_desktop_environment() {
-    clear
-    log "INFO" "Instalando entorno de escritorio"
-    
-    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║ Selección de Entorno de Escritorio     ║${RESET}"
-    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
-    
-    local environments=(
-        "GNOME"
-        "XFCE"
-        "Qtile"
-        "BSPWM"
-        "Hyprland"
-    )
-    
-    PS3=$'\n'"${YELLOW}Seleccione entorno de escritorio:${RESET} "
-    select env in "${environments[@]}"; do
-        case $env in
-            "GNOME"|"XFCE"|"Qtile"|"BSPWM"|"Hyprland")
-                install_packages_for "$env"
-                configure_display_manager
-                break
-                ;;
-            *)
-                echo -e "\n${RED}Opción inválida${RESET}"
-                ;;
-        esac
-    done
-    
-    log "SUCCESS" "Entorno de escritorio instalado correctamente"
-    return 0
-    sleep 3
-}
-
-install_packages_for() {
-    clear
-    local env=$1
-    local packages=()
-    
-    case $env in
-        "GNOME")
-            packages=(
-                gnome
-                gnome-extra
-                gdm
-            )
-            ;;
-        "XFCE")
-            packages=(
-                xfce4
-                xfce4-goodies
-                lightdm
-                lightdm-gtk-greeter
-            )
-            ;;
-        "Qtile")
-            packages=(
-                qtile
-                xorg-server
-                xorg-xinit
-                lightdm
-                lightdm-gtk-greeter
-            )
-            ;;
-        "BSPWM")
-            packages=(
-                bspwm
-                sxhkd
-                xorg-server
-                xorg-xinit
-                lightdm
-                lightdm-gtk-greeter
-            )
-            ;;
-        "Hyprland")
-            packages=(
-                hyprland
-                xorg-xwayland
-                sddm
-            )
-            ;;
-    esac
-    
-    echo -e "\n${CYAN}Instalando paquetes para $env...${RESET}"
-    if ! arch-chroot /mnt pacman -S --noconfirm "${packages[@]}"; then
-        log "ERROR" "Fallo al instalar paquetes para $env"
-        return 1
-    fi
-    
-    return 0
-    sleep 3
-}
-
-configure_display_manager() {
-    clear
-    log "INFO" "Configurando display manager"
-    
-    local display_manager
-    
-    if [[ "$env" == "GNOME" ]]; then
-        display_manager="gdm"
-    elif [[ "$env" == "Hyprland" ]]; then
-        display_manager="sddm"
-    else
-        display_manager="lightdm"
-    fi
-    
-    echo -e "\n${CYAN}Habilitando $display_manager...${RESET}"
-    if ! arch-chroot /mnt systemctl enable "$display_manager"; then
-        log "ERROR" "Fallo al habilitar $display_manager"
-        return 1
-    fi
-    
-    log "SUCCESS" "Display manager configurado correctamente"
-    return 0
-    sleep 2
-}
 
 configure_zeuspy_theme() {
-    clear
     log "INFO" "Configurando tema personalizado ZeuspyEC"
     
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
@@ -2030,7 +1729,6 @@ generate_installation_report() {
     } > "$report_file"
     
     log "SUCCESS" "Reporte generado en $report_file"
-    sleep 3
 }
 
 cleanup() {
@@ -2136,6 +1834,10 @@ finalize_installation() {
     return 0
 }
 
+# ==============================================================================
+# Función Principal
+# ==============================================================================
+
 # Función para detectar sistemas operativos existentes
 detect_existing_os() {
     log "INFO" "Detectando otros sistemas operativos"
@@ -2192,7 +1894,6 @@ detect_existing_os() {
         sleep 2
     fi
 }
-
 error_handler() {
     local exit_code=$1
     local line_no=$2
@@ -2251,25 +1952,6 @@ retry_command() {
     return 1
 }
 
-# Función para inicializar el script
-init_script() {
-    display_banner
-    echo -e "${HEADER}Inicializando el instalador ZeusPy...${RESET}"
-    sleep 1
-}
-
-# Pasos de instalación simulados
-check_system_requirements() { display_banner; echo "Verificando requisitos del sistema..."; sleep 1; return 0; }
-check_network_connectivity() { display_banner; echo "Verificando conectividad de red..."; sleep 1; return 0; }
-detect_existing_os() { display_banner; echo "Detectando sistemas operativos existentes..."; sleep 1; return 0; }
-prepare_disk() { display_banner; echo "Preparando el disco..."; sleep 1; return 0; }
-install_base_system() { display_banner; echo "Instalando sistema base..."; sleep 1; return 0; }
-configure_system_base() { display_banner; echo "Configurando el sistema base..."; sleep 1; return 0; }
-configure_bootloader() { display_banner; echo "Configurando el gestor de arranque..."; sleep 1; return 0; }
-configure_zeuspy_theme() { display_banner; echo "Aplicando tema ZeusPy..."; sleep 1; return 0; }
-generate_installation_report() { display_banner; echo "Generando informe de instalación..."; sleep 1; return 0; }
-
-# Función principal
 main() {
     # Iniciar contador de tiempo
     local start_time
@@ -2277,22 +1959,19 @@ main() {
     
     # Inicializar script
     init_script
-
-    # Mostrar menú principal
-    show_main_menu
     
     # Pasos de instalación
     local installation_steps=(
-        "check_system_requirements"
-        "check_network_connectivity"
-        "detect_existing_os"  
-        "prepare_disk"
-        "install_base_system"
-        "configure_system_base"
-        "configure_bootloader"
-        "configure_zeuspy_theme"
-        "generate_installation_report"
-    )
+    "check_system_requirements"
+    "check_network_connectivity"
+    "detect_existing_os"  
+    "prepare_disk"
+    "install_base_system"
+    "configure_system_base"
+    "configure_bootloader"
+    "configure_zeuspy_theme"
+    "generate_installation_report"
+)
     # Ejecutar pasos de instalación
     local total_steps=${#installation_steps[@]}
     local current=0
@@ -2301,11 +1980,12 @@ main() {
         ((current++))
         echo -e "\n${HEADER}[$current/$total_steps] ${step//_/ }${RESET}"
         if ! $step; then
-            echo -e "${ERROR}Instalación fallida en: $step${RESET}"
+            log "ERROR" "Instalación fallida en: $step"
             cleanup
             exit 1
         fi
         show_progress "$current" "$total_steps"
+        echo
     done
     
     # Calcular tiempo de instalación
@@ -2320,6 +2000,7 @@ main() {
     
     return 0
 }
+
 
 # Verificar si se ejecuta como root
 if [[ $EUID -ne 0 ]]; then

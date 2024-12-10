@@ -817,6 +817,26 @@ select_partition() {
     fi
 
     echo "Partición seleccionada: $selected_partition"
+
+    # Confirmación antes de proceder
+    echo -e "${YELLOW}Advertencia: Se destruirá la etiqueta del disco y se perderán todos los datos.${RESET}"
+    read -p "¿Desea continuar? (s/N): " confirm
+    if [[ ! "$confirm" =~ ^[Ss]$ ]]; then
+        echo "Operación cancelada."
+        exit 1
+    fi
+
+    # Verificar espacio disponible en la partición seleccionada
+    available_space=$(df "$selected_partition" | tail -1 | awk '{print $4}')
+    required_space=$((512 + 20480 + 2048)) # Espacio total requerido en KB (EFI + root + swap)
+
+    if (( available_space < required_space )); then
+        echo -e "${RED}Error: No hay suficiente espacio disponible para crear las particiones.${RESET}"
+        exit 1
+    fi
+
+    create_partitions "$selected_partition" # Crear las particiones en la seleccionada
+    partprobe "$selected_partition" # Informar al kernel sobre los cambios
 }
 
 # Función para crear las particiones EFI, root y swap

@@ -246,9 +246,6 @@ init_script() {
     
     # Verificar dependencias
     check_dependencies
-
-    select_partition  # Llamar a la función para seleccionar la partición
-    create_partitions "$selected_partition"  # Crear las particiones en la seleccionada
     
     log "INFO" "Inicialización completada"
 }
@@ -798,63 +795,6 @@ prepare_disk() {
     fi
     
     return 0
-}
-list_partitions() {
-    echo -e "${CYAN}Discos y Particiones Disponibles:${RESET}"
-    lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E 'disk|part'
-}
-
-# Función para seleccionar la partición
-select_partition() {
-    list_partitions
-    echo -ne "${YELLOW}Seleccione la partición para dividir (ej. /dev/sda1):${RESET} "
-    read -r selected_partition
-
-    # Verificar si la partición existe
-    if [ ! -b "$selected_partition" ]; then
-        echo -e "${RED}Error: La partición seleccionada no es válida.${RESET}"
-        exit 1
-    fi
-
-    echo "Partición seleccionada: $selected_partition"
-
-    # Confirmación antes de proceder
-    echo -e "${YELLOW}Advertencia: Se destruirá la etiqueta del disco y se perderán todos los datos.${RESET}"
-    read -p "¿Desea continuar? (s/N): " confirm
-    if [[ ! "$confirm" =~ ^[Ss]$ ]]; then
-        echo "Operación cancelada."
-        exit 1
-    fi
-
-    # Verificar espacio disponible en la partición seleccionada
-    available_space=$(df "$selected_partition" | tail -1 | awk '{print $4}')
-    required_space=$((512 + 20480 + 2048)) # Espacio total requerido en KB (EFI + root + swap)
-
-    if (( available_space < required_space )); then
-        echo -e "${RED}Error: No hay suficiente espacio disponible para crear las particiones.${RESET}"
-        exit 1
-    fi
-
-    create_partitions "$selected_partition" # Crear las particiones en la seleccionada
-    partprobe "$selected_partition" # Informar al kernel sobre los cambios
-}
-
-# Función para crear las particiones EFI, root y swap
-create_partitions() {
-    local partition="$1"
-    
-    # Definir tamaños de las nuevas particiones
-    local efi_size="300M"
-    local root_size="295.7G"
-    local swap_size="4G"
-
-    # Crear la tabla de particiones usando parted
-    parted "$partition" mklabel gpt
-    parted -a optimal "$partition" mkpart primary fat32 1MiB "$efi_size"
-    parted -a optimal "$partition" mkpart primary ext4 "$efi_size" "$((efi_size + root_size))"
-    parted -a optimal "$partition" mkpart primary linux-swap "$((efi_size + root_size))" "$((efi_size + root_size + swap_size))"
-
-    echo -e "${GREEN}Particiones creadas exitosamente:${RESET}"
 }
 
 show_warning_message() {

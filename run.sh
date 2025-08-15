@@ -254,6 +254,179 @@ init_script() {
 # Funciones de Verificación del Sistema y Red
 # ==============================================================================
 
+# Función robusta para detectar el modo de arranque (UEFI/BIOS)
+detect_boot_mode() {
+    local boot_detected=""
+    local detection_methods=()
+    
+    log "INFO" "Detectando modo de arranque del sistema..."
+    
+    # Método 1: Verificar directorio EFI vars (más confiable)
+    if [[ -d "/sys/firmware/efi/efivars" ]]; then
+        detection_methods+=("efivars:UEFI")
+        boot_detected="UEFI"
+        log "DEBUG" "Método efivars: UEFI detectado"
+    else
+        detection_methods+=("efivars:BIOS")
+        log "DEBUG" "Método efivars: BIOS detectado"
+    fi
+    
+    # Método 2: Verificar con efibootmgr
+    if command -v efibootmgr &>/dev/null; then
+        if efibootmgr &>/dev/null; then
+            detection_methods+=("efibootmgr:UEFI")
+            if [[ -z "$boot_detected" ]]; then
+                boot_detected="UEFI"
+            fi
+            log "DEBUG" "Método efibootmgr: UEFI detectado"
+        else
+            detection_methods+=("efibootmgr:BIOS")
+            if [[ -z "$boot_detected" ]]; then
+                boot_detected="BIOS"
+            fi
+            log "DEBUG" "Método efibootmgr: BIOS detectado"
+        fi
+    fi
+    
+    # Método 3: Verificar con dmesg
+    if dmesg | grep -q "EFI v"; then
+        detection_methods+=("dmesg:UEFI")
+        if [[ -z "$boot_detected" ]]; then
+            boot_detected="UEFI"
+        fi
+        log "DEBUG" "Método dmesg: UEFI detectado"
+    elif dmesg | grep -q "BIOS"; then
+        detection_methods+=("dmesg:BIOS")
+        if [[ -z "$boot_detected" ]]; then
+            boot_detected="BIOS"
+        fi
+        log "DEBUG" "Método dmesg: BIOS detectado"
+    fi
+    
+    # Método 4: Verificar con dmidecode (requiere root)
+    if [[ $EUID -eq 0 ]] && command -v dmidecode &>/dev/null; then
+        local bios_info
+        bios_info=$(dmidecode -t bios 2>/dev/null | grep -i "UEFI")
+        if [[ -n "$bios_info" ]]; then
+            detection_methods+=("dmidecode:UEFI")
+            if [[ -z "$boot_detected" ]]; then
+                boot_detected="UEFI"
+            fi
+            log "DEBUG" "Método dmidecode: UEFI detectado"
+        else
+            detection_methods+=("dmidecode:BIOS")
+            if [[ -z "$boot_detected" ]]; then
+                boot_detected="BIOS"
+            fi
+            log "DEBUG" "Método dmidecode: BIOS detectado"
+        fi
+    fi
+    
+    # Método 5: Verificar tabla de particiones del disco actual
+    if command -v parted &>/dev/null && [[ -n "${TARGET_DISK:-}" ]]; then
+        local partition_table
+        partition_table=$(parted -s "$TARGET_DISK" print 2>/dev/null | grep "Partition Table" | awk '{print $3}')
+        if [[ "$partition_table" == "gpt" ]]; then
+            detection_methods+=("partition:GPT->UEFI")
+            log "DEBUG" "Tabla de particiones GPT detectada (típico de UEFI)"
+        elif [[ "$partition_table" == "msdos" ]]; then
+            detection_methods+=("partition:MBR->BIOS")
+            log "DEBUG" "Tabla de particiones MBR detectada (típico de BIOS)"
+        fi
+    fi
+    
+    # Método 6: Verificar si existe partición EFI montada
+    if mount | grep -q "/boot/efi\|/efi"; then
+        detection_methods+=("mount:UEFI")
+        if [[ -z "$boot_detected" ]]; then
+            boot_detected="UEFI"
+        fi
+        log "DEBUG" "Partición EFI montada detectada"
+    fi
+    
+    # Determinar el modo final
+    if [[ -z "$boot_detected" ]]; then
+        # Si no se pudo detectar, asumir BIOS por seguridad
+        BOOT_MODE="BIOS"
+        log "WARN" "No se pudo determinar el modo de arranque con certeza, asumiendo BIOS"
+    else
+        BOOT_MODE="$boot_detected"
+        log "SUCCESS" "Modo de arranque detectado: $BOOT_MODE"
+    fi
+    
+    # Registrar todos los métodos de detección usados
+    log "DEBUG" "Métodos de detección utilizados: ${detection_methods[*]}"
+    
+    # Validar que el modo detectado sea consistente con el sistema
+    validate_boot_mode_detection
+    
+    return 0
+}
+
+# Función para validar que la detección es correcta
+validate_boot_mode_detection() {
+    log "INFO" "Validando detección del modo de arranque..."
+    
+    local validation_passed=true
+    local warnings=()
+    
+    # Si detectamos UEFI, verificar que podemos trabajar con él
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        # Verificar que existe el directorio EFI
+        if [[ ! -d "/sys/firmware/efi" ]]; then
+            warnings+=("Modo UEFI detectado pero falta /sys/firmware/efi")
+            validation_passed=false
+        fi
+        
+        # Verificar que efibootmgr funciona
+        if command -v efibootmgr &>/dev/null; then
+            if ! efibootmgr &>/dev/null; then
+                warnings+=("efibootmgr no funciona correctamente en modo UEFI")
+            fi
+        fi
+        
+        # Información adicional para UEFI
+        log "INFO" "Sistema UEFI confirmado - Se usará esquema GPT"
+        log "INFO" "Particiones requeridas: EFI (FAT32), ROOT (ext4), SWAP"
+        
+    else  # BIOS
+        # Verificar que NO existe el directorio EFI vars
+        if [[ -d "/sys/firmware/efi/efivars" ]]; then
+            warnings+=("Directorio EFI existe pero se detectó BIOS - verificando...")
+            # Hacer una segunda verificación
+            if ls /sys/firmware/efi/efivars/ 2>/dev/null | grep -q .; then
+                log "ERROR" "Inconsistencia: EFI vars presentes pero modo BIOS detectado"
+                log "WARN" "Cambiando a modo UEFI por seguridad"
+                BOOT_MODE="UEFI"
+                validation_passed=true
+            fi
+        fi
+        
+        # Información adicional para BIOS
+        log "INFO" "Sistema BIOS Legacy confirmado - Se usará esquema MBR"
+        log "INFO" "Particiones requeridas: BOOT (ext4), ROOT (ext4), SWAP"
+    fi
+    
+    # Mostrar advertencias si las hay
+    if [[ ${#warnings[@]} -gt 0 ]]; then
+        for warning in "${warnings[@]}"; do
+            log "WARN" "$warning"
+        done
+    fi
+    
+    if [[ "$validation_passed" == false ]]; then
+        log "ERROR" "La validación del modo de arranque falló"
+        echo -e "${YELLOW}⚠ Advertencia: Detección del modo de arranque inconsistente${RESET}"
+        echo -e "${YELLOW}Por favor, verifique su configuración de BIOS/UEFI${RESET}"
+        read -p "¿Desea continuar de todos modos? (s/N): " -r
+        if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+            exit 1
+        fi
+    fi
+    
+    return 0
+}
+
 check_dependencies() {
     log "INFO" "Verificando dependencias del sistema"
     
@@ -406,13 +579,12 @@ check_system_requirements() {
     fi
     echo -e "${GREEN}✔ x86_64${RESET}"
     
-    # Verificar modo de arranque
+    # Verificar modo de arranque con múltiples métodos
     echo -ne "${WHITE}Modo de arranque:${RESET} "
-    if [[ -d "/sys/firmware/efi/efivars" ]]; then
-        BOOT_MODE="UEFI"
+    detect_boot_mode
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
         echo -e "${GREEN}✔ UEFI${RESET}"
     else
-        BOOT_MODE="BIOS"
         echo -e "${YELLOW}➜ BIOS Legacy${RESET}"
     fi
     
@@ -751,28 +923,15 @@ prepare_disk() {
         fi
     fi
     
-    # Seleccionar esquema de particionamiento
+    # Seleccionar esquema de particionamiento según el modo de arranque
+    # UEFI siempre usa GPT, BIOS siempre usa MBR
     local partition_scheme
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
         partition_scheme="gpt"
         echo -e "\n${CYAN}Modo UEFI detectado - usando esquema GPT${RESET}"
     else
-        echo -e "\n${YELLOW}Seleccione esquema de particionamiento:${RESET}"
-        select scheme in "MBR (BIOS Legacy)" "GPT (Avanzado)" "Cancelar"; do
-            case $scheme in
-                "MBR (BIOS Legacy)")
-                    partition_scheme="mbr"
-                    break
-                    ;;
-                "GPT (Avanzado)")
-                    partition_scheme="gpt"
-                    break
-                    ;;
-                "Cancelar")
-                    return 1
-                    ;;
-            esac
-        done
+        partition_scheme="mbr"
+        echo -e "\n${CYAN}Modo BIOS Legacy detectado - usando esquema MBR${RESET}"
     fi
     
     # Mostrar advertencia
@@ -946,7 +1105,7 @@ create_mbr_partitions() {
     return 0
 }
 
-# Función para montar particiones de forma segura
+# Función unificada para montar particiones (evita duplicados)
 mount_partitions() {
     local root_part="$1"
     local boot_part="$2"
@@ -962,9 +1121,9 @@ mount_partitions() {
         return 1
     fi
     
-    # Montar BOOT/EFI
+    # Montar BOOT/EFI según el modo de arranque detectado
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -ne "  Montando EFI... "
+        echo -ne "  Montando partición EFI (UEFI)... "
         mkdir -p /mnt/boot/efi
         if retry_command mount "$boot_part" /mnt/boot/efi; then
             echo -e "${GREEN}✔${RESET}"
@@ -973,47 +1132,7 @@ mount_partitions() {
             return 1
         fi
     else
-        echo -ne "  Montando BOOT... "
-        mkdir -p /mnt/boot
-        if retry_command mount "$boot_part" /mnt/boot; then
-            echo -e "${GREEN}✔${RESET}"
-        else
-            echo -e "${RED}✘${RESET}"
-            return 1
-        fi
-    fi
-    
-    return 0
-}
-
-# Función para montar particiones de forma segura
-mount_partitions() {
-    local root_part="$1"
-    local boot_part="$2"
-    
-    echo -e "\n${CYAN}Montando particiones...${RESET}"
-    
-    # Montar ROOT
-    echo -ne "  Montando ROOT... "
-    if retry_command mount "$root_part" /mnt; then
-        echo -e "${GREEN}✔${RESET}"
-    else
-        echo -e "${RED}✘${RESET}"
-        return 1
-    fi
-    
-    # Montar BOOT/EFI
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -ne "  Montando EFI... "
-        mkdir -p /mnt/boot/efi
-        if retry_command mount "$boot_part" /mnt/boot/efi; then
-            echo -e "${GREEN}✔${RESET}"
-        else
-            echo -e "${RED}✘${RESET}"
-            return 1
-        fi
-    else
-        echo -ne "  Montando BOOT... "
+        echo -ne "  Montando partición BOOT (BIOS)... "
         mkdir -p /mnt/boot
         if retry_command mount "$boot_part" /mnt/boot; then
             echo -e "${GREEN}✔${RESET}"
@@ -1098,35 +1217,11 @@ format_and_mount_partitions() {
         echo -e "${GREEN}✔${RESET}"
     fi
     
-    # Montar particiones
-    echo -e "\n${CYAN}Montando particiones...${RESET}"
-    
-    echo -ne "${WHITE}Montando ROOT...${RESET} "
-    if ! mount "$root_part" /mnt; then
-        echo -e "${RED}✘${RESET}"
-        log "ERROR" "Error al montar partición ROOT"
+    # Montar particiones usando la función unificada
+    if ! mount_partitions "$root_part" "$boot_part"; then
+        log "ERROR" "Error al montar las particiones"
         return 1
     fi
-    echo -e "${GREEN}✔${RESET}"
-    
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -ne "${WHITE}Montando EFI...${RESET} "
-        mkdir -p /mnt/boot/efi
-        if ! mount "$boot_part" /mnt/boot/efi; then
-            echo -e "${RED}✘${RESET}"
-            log "ERROR" "Error al montar partición EFI"
-            return 1
-        fi
-    else
-        echo -ne "${WHITE}Montando BOOT...${RESET} "
-        mkdir -p /mnt/boot
-        if ! mount "$boot_part" /mnt/boot; then
-            echo -e "${RED}✘${RESET}"
-            log "ERROR" "Error al montar partición BOOT"
-            return 1
-        fi
-    fi
-    echo -e "${GREEN}✔${RESET}"
     
     log "SUCCESS" "Particiones formateadas y montadas correctamente"
     return 0

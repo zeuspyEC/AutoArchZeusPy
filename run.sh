@@ -823,9 +823,10 @@ detect_current_wifi_connection() {
                     echo -e "\n${CYAN}Probando reconexión con las credenciales...${RESET}"
                     iwctl station "$interface" disconnect 2>/dev/null
                     sleep 2
-                    
+
                     echo -ne "${CYAN}Conectando a '$current_ssid'... ${RESET}"
-                    if iwctl station "$interface" connect "$current_ssid" --passphrase "$wifi_password" 2>/dev/null; then
+                    # CORRECCIÓN: --passphrase VA PRIMERO!
+                    if iwctl --passphrase "$wifi_password" station "$interface" connect "$current_ssid" 2>/dev/null; then
                         sleep 4
                         
                         # VERIFICAR CON PING
@@ -1055,8 +1056,9 @@ setup_wifi_connection() {
     
     # Intentar conexión
     echo -e "\n${CYAN}Conectando a $ssid...${RESET}"
-    
-    if iwctl station "$selected_interface" connect "$ssid" --passphrase "$password"; then
+
+    # CORRECCIÓN: --passphrase VA PRIMERO!
+    if iwctl --passphrase "$password" station "$selected_interface" connect "$ssid"; then
         sleep 3
         if ping -c 1 archlinux.org &>/dev/null; then
             log "SUCCESS" "Conexión WiFi establecida"
@@ -1720,15 +1722,16 @@ install_essential_packages() {
                     if [[ "$CONNECTION_TYPE" == "wifi" ]] && [[ -n "$WIFI_SSID" ]] && [[ -n "$WIFI_PASSWORD" ]]; then
                         echo -e "${CYAN}Reconectando a WiFi: '$WIFI_SSID'${RESET}"
                         
-                        # IMPORTANTE: Comillas dobles para manejar espacios internos
+                        # CORRECCIÓN: --passphrase VA PRIMERO!
                         if command -v iwctl &>/dev/null; then
                             iwctl station "${WIFI_INTERFACE:-wlan0}" disconnect 2>/dev/null
                             sleep 2
-                            iwctl station "${WIFI_INTERFACE:-wlan0}" connect "$WIFI_SSID" --passphrase "$WIFI_PASSWORD" 2>/dev/null
+                            # ORDEN CORRECTO:
+                            iwctl --passphrase "$WIFI_PASSWORD" station "${WIFI_INTERFACE:-wlan0}" connect "$WIFI_SSID" 2>/dev/null
                             sleep 5
                         fi
                         
-                        # NetworkManager también con comillas
+                        # NetworkManager mantiene el mismo formato
                         if ! ping -c 1 archlinux.org &>/dev/null && command -v nmcli &>/dev/null; then
                             systemctl restart NetworkManager 2>/dev/null
                             sleep 3

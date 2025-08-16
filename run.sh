@@ -766,8 +766,8 @@ detect_current_wifi_connection() {
             station_info=$(iwctl station "$interface" show 2>/dev/null)
             
             if echo "$station_info" | grep -q "State.*connected"; then
-                # Extraer SSID de la conexión activa
-                current_ssid=$(echo "$station_info" | grep "Connected network" | awk '{print $NF}')
+                # CORRECCIÓN: Capturar TODO el SSID, no solo la última palabra
+                current_ssid=$(echo "$station_info" | grep "Connected network" | sed 's/.*Connected network[[:space:]]*//')
                 current_interface="$interface"
                 
                 if [ -n "$current_ssid" ]; then
@@ -803,8 +803,8 @@ detect_current_wifi_connection() {
         
         # Verificar si NetworkManager está activo
         if systemctl is-active NetworkManager &>/dev/null; then
-            # Obtener SSID activo
-            current_ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes:' | cut -d':' -f2)
+            # Obtener SSID activo - CORREGIDO para capturar SSID completo
+            current_ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes:' | sed 's/^yes://')
             
             if [ -n "$current_ssid" ]; then
                 echo -e "${GREEN}✅ WiFi detectado via NetworkManager:${RESET}"
@@ -814,7 +814,7 @@ detect_current_wifi_connection() {
                 current_interface=$(nmcli -t -f device,state dev | grep ':connected' | head -1 | cut -d':' -f1)
                 
                 # Intentar obtener contraseña de NetworkManager
-                wifi_password=$(nmcli --show-secrets -f 802-11-wireless-security.psk connection show "$current_ssid" 2>/dev/null | grep "psk:" | cut -d':' -f2 | tr -d ' ')
+                wifi_password=$(nmcli --show-secrets -f 802-11-wireless-security.psk connection show "$current_ssid" 2>/dev/null | grep "psk:" | sed 's/.*psk://' | tr -d ' ')
                 
                 # Si no se pudo obtener, pedirla al usuario
                 if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
@@ -840,7 +840,7 @@ detect_current_wifi_connection() {
         
         # Pedir información manualmente
         echo -e "\n${CYAN}Por favor, ingrese los datos de su conexión WiFi actual:${RESET}"
-        echo -ne "${YELLOW}SSID (nombre de la red WiFi):${RESET} "
+        echo -ne "${YELLOW}SSID (nombre completo de la red WiFi):${RESET} "
         read -r current_ssid
         echo -ne "${YELLOW}Contraseña:${RESET} "
         read -rs wifi_password
@@ -1579,98 +1579,6 @@ install_essential_packages() {
         echo -e "${YELLOW}⚠ No hay credenciales guardadas, intentando detectar...${RESET}"
         detect_current_wifi_connection
     fi
-    
-    # PRIMERO: Configurar mirrors si no se ha hecho
-    if [[ ! -f /etc/pacman.d/mirrorlist.backup ]]; then
-        configure_mirrorlist
-    fi
-    
-    # Verificar y asegurar conexión de red
-    echo -e "${CYAN}Verificando conexión de red...${RESET}"
-    local max_retries=5
-    local retry_count=0
-    
-    while ((retry_count < max_retries)); do
-        if ping -c 2 -W 5 archlinux.org &>/dev/null; then
-            echo -e "${GREEN}✓ Conexión verificada${RESET}"
-            break
-        else
-            ((retry_count++))
-            echo -e "${YELLOW}⚠ Sin conexión, intento $retry_count de $max_retries${RESET}"
-            
-            if ((retry_count < max_retries)); then
-                echo -e "${CYAN}Reintentando configuración de red...${RESET}"
-                
-                # Intentar reconectar con credenciales guardadas
-                if [[ -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
-                    source /tmp/zeuspyec_install/network_credentials.txt
-                    
-                    if [[ "$CONNECTION_TYPE" == "wifi" ]] && [[ -n "$WIFI_SSID" ]] && [[ -n "$WIFI_PASSWORD" ]]; then
-                        echo -e "${CYAN}Reconectando a WiFi: $WIFI_SSID${RESET}"
-                        
-                        # IMPORTANTE: Comillas dobles para manejar espacios
-                        if command -v iwctl &>/dev/null; then
-                            iwctl station wlan0 disconnect 2>/dev/null
-                            sleep 2
-                            iwctl station wlan0 connect "$WIFI_SSID" --passphrase "$WIFI_PASSWORD" 2>/dev/null
-                            sleep 5
-                        fi
-                        
-                        # NetworkManager también con comillas
-                        if ! ping -c 1 archlinux.org &>/dev/null && command -v nmcli &>/dev/null; then
-                            systemctl restart NetworkManager 2>/dev/null
-                            sleep 3
-                            nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD" 2>/dev/null
-                            sleep 5
-                        fi
-                    fi
-                else
-                    # Si no hay credenciales, intentar dhcpcd
-                    dhcpcd 2>/dev/null &
-                    sleep 5
-                fi
-            else
-                log "ERROR" "Sin conexión a Internet después de $max_retries intentos"
-                echo -e "${RED}✘ Configure manualmente la conexión de red${RESET}"
-                return 1
-            fi
-        fi
-    done
-    
-    # Actualizar base de datos de pacman con reintentos
-    echo -e "${CYAN}Actualizando base de datos de pacman...${RESET}"
-    local pacman_retry=0
-    while ((pacman_retry < 3)); do
-        if pacman -Sy --noconfirm; then
-            break
-        else
-            ((pacman_retry++))
-            echo -e "${YELLOW}Reintentando actualización de pacman ($pacman_retry/3)...${RESET}"
-            sleep 3
-        fi
-    done
-    
-    # AQUÍ FALTABA EL CÓDIGO DE INSTALACIÓN - ESTE ES EL FIX:
-    # IMPORTANTE: Debe terminar con estos comandos y el cierre:
-    echo -e "${CYAN}Instalando sistema base con pacstrap...${RESET}"
-    
-    if pacstrap /mnt base linux linux-firmware networkmanager grub efibootmgr sudo nano base-devel git; then
-        echo -e "${GREEN}✔ Sistema base instalado correctamente${RESET}"
-        log "SUCCESS" "Paquetes esenciales instalados"
-        return 0
-    else
-        echo -e "${RED}✘ Error al instalar sistema base${RESET}"
-        log "ERROR" "Fallo en pacstrap"
-        return 1
-    fi
-}
-    log "INFO" "Instalando paquetes esenciales"
-    
-    # VERIFICAR CREDENCIALES PRIMERO
-    if [[ ! -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
-        echo -e "${YELLOW}⚠ No hay credenciales guardadas, intentando detectar...${RESET}"
-        detect_current_wifi_connection
-    fi
     # PRIMERO: Configurar mirrors si no se ha hecho
     if [[ ! -f /etc/pacman.d/mirrorlist.backup ]]; then
         configure_mirrorlist
@@ -1740,6 +1648,7 @@ install_essential_packages() {
             sleep 3
         fi
     done
+}
     
 generate_fstab() {
     log "INFO" "Generando fstab"

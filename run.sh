@@ -66,18 +66,27 @@ declare -g LOG_FILE="/tmp/zeuspyec_installer.log"
 declare -g ERROR_LOG="/tmp/zeuspyec_installer_error.log"
 declare -g DEBUG_LOG="/tmp/zeuspyec_installer_debug.log"
 
-# Paquetes base requeridos
-declare -g BASE_PACKAGES=(
+# Paquetes mínimos esenciales para arrancar el sistema
+declare -g ESSENTIAL_PACKAGES=(
     "base"
-    "base-devel"
     "linux"
     "linux-firmware"
     "networkmanager"
     "grub"
     "efibootmgr"
     "sudo"
+    "nano"
+)
+
+# Paquetes adicionales (se instalarán post-instalación)
+declare -g ADDITIONAL_PACKAGES=(
+    "base-devel"
     "vim"
     "git"
+    "wget"
+    "curl"
+    "htop"
+    "neofetch"
 )
 
 # Paquetes para BSPWM
@@ -418,8 +427,8 @@ validate_boot_mode_detection() {
         log "ERROR" "La validación del modo de arranque falló"
         echo -e "${YELLOW}⚠ Advertencia: Detección del modo de arranque inconsistente${RESET}"
         echo -e "${YELLOW}Por favor, verifique su configuración de BIOS/UEFI${RESET}"
-        read -p "¿Desea continuar de todos modos? (s/N): " -r
-        if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+        read -p "¿Desea continuar de todos modos? [S/n]: " -r
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
             exit 1
         fi
     fi
@@ -504,9 +513,9 @@ check_dependencies() {
         echo -e "\n${RED}No se pudieron instalar las siguientes dependencias:${RESET}"
         printf '%s\n' "${missing_deps[@]}" | sed 's/^/  • /'
         
-        echo -e "\n${YELLOW}¿Desea continuar de todos modos? (s/N):${RESET} "
+        echo -e "\n${YELLOW}¿Desea continuar de todos modos? [S/n]:${RESET} "
         read -r response
-        if [[ "$response" =~ ^[Ss]$ ]]; then
+        if [[ ! "$response" =~ ^[Nn]$ ]]; then
             log "WARN" "Continuando sin todas las dependencias"
             return 0
         else
@@ -539,9 +548,9 @@ install_package() {
         fi
     done
     
-    echo -e "${YELLOW}¿Desea continuar sin $package? (s/N):${RESET} "
+    echo -e "${YELLOW}¿Desea continuar sin $package? [S/n]:${RESET} "
     read -r response
-    [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
+    [[ ! "$response" =~ ^[Nn]$ ]] && return 0 || return 1
 }
 
 check_system_requirements() {
@@ -728,8 +737,127 @@ setup_network_connection() {
     done
 }
 
+detect_current_wifi_connection() {
+    log "INFO" "Detectando conexión WiFi activa"
+    
+    # Obtener información de la conexión WiFi activa
+    local current_ssid=""
+    local current_interface=""
+    local wifi_password=""
+    
+    # Método 1: Usar nmcli para obtener conexión activa
+    if command -v nmcli &>/dev/null; then
+        echo -e "${CYAN}Detectando red WiFi activa con NetworkManager...${RESET}"
+        
+        # Obtener SSID de la conexión activa
+        current_ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes:' | cut -d':' -f2)
+        
+        if [ -n "$current_ssid" ]; then
+            echo -e "${GREEN}✅ Red WiFi detectada: $current_ssid${RESET}"
+            
+            # Obtener interfaz activa
+            current_interface=$(nmcli -t -f device,state dev | grep ':connected' | grep 'wifi' | cut -d':' -f1 | head -1)
+            
+            # Intentar obtener la contraseña de la conexión
+            if nmcli --show-secrets connection show "$current_ssid" &>/dev/null; then
+                wifi_password=$(nmcli --show-secrets -f 802-11-wireless-security.psk connection show "$current_ssid" 2>/dev/null | grep "802-11-wireless-security.psk:" | cut -d':' -f2 | tr -d ' ')
+                
+                if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
+                    # Intentar método alternativo para obtener clave
+                    wifi_password=$(nmcli --show-secrets connection show "$current_ssid" 2>/dev/null | grep -E "(psk|password)" | grep -v "psk-flags" | head -1 | cut -d':' -f2 | tr -d ' ')
+                fi
+            fi
+            
+            # Si no se pudo obtener la clave, usar método manual simple
+            if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
+                echo -e "${YELLOW}⚠ No se pudo detectar la contraseña automáticamente${RESET}"
+                echo -e "${WHITE}Red detectada: $current_ssid${RESET}"
+                echo -ne "${YELLOW}Ingrese la contraseña de esta red:${RESET} "
+                read -rs wifi_password
+                echo
+            else
+                echo -e "${GREEN}✅ Contraseña detectada automáticamente${RESET}"
+            fi
+            
+            # Verificar conexión
+            if ping -c 1 archlinux.org &>/dev/null; then
+                log "SUCCESS" "Conexión WiFi activa confirmada"
+                
+                # Guardar credenciales para post-instalación
+                mkdir -p /tmp/zeuspyec_install
+                cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
+# Configuración de Red ZeuspyEC
+# Este archivo contiene las credenciales de red usadas durante la instalación
+# Generado automáticamente el $(date)
+
+CONNECTION_TYPE=wifi
+WIFI_SSID=$current_ssid
+WIFI_PASSWORD=$wifi_password
+WIFI_INTERFACE=$current_interface
+INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+                log "INFO" "Credenciales WiFi guardadas en network_credentials.txt"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Método 2: Usar iwctl si nmcli no funciona
+    if command -v iwctl &>/dev/null; then
+        echo -e "${CYAN}Detectando con iwctl...${RESET}"
+        
+        # Obtener interfaces wireless
+        local wireless_interfaces
+        wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]+" | head -1))
+        
+        if [ ${#wireless_interfaces[@]} -gt 0 ]; then
+            current_interface=${wireless_interfaces[0]}
+            
+            # Obtener estado de conexión
+            local connection_info
+            connection_info=$(iwctl station "$current_interface" show 2>/dev/null)
+            
+            if echo "$connection_info" | grep -q "connected"; then
+                current_ssid=$(echo "$connection_info" | grep "Connected network" | awk '{print $NF}')
+                
+                if [ -n "$current_ssid" ]; then
+                    echo -e "${GREEN}✅ Red WiFi activa detectada: $current_ssid${RESET}"
+                    echo -ne "${YELLOW}Ingrese la contraseña de esta red:${RESET} "
+                    read -rs wifi_password
+                    echo
+                    
+                    # Guardar credenciales
+                    mkdir -p /tmp/zeuspyec_install
+                    cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
+# Configuración de Red ZeuspyEC
+# Este archivo contiene las credenciales de red usadas durante la instalación
+# Generado automáticamente el $(date)
+
+CONNECTION_TYPE=wifi
+WIFI_SSID=$current_ssid
+WIFI_PASSWORD=$wifi_password
+WIFI_INTERFACE=$current_interface
+INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+                    log "INFO" "Credenciales WiFi guardadas en network_credentials.txt"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    
+    log "WARN" "No se detectó conexión WiFi activa"
+    return 1
+}
+
 setup_wifi_connection() {
-    log "INFO" "Configurando conexión WiFi"
+    # Primero intentar detectar conexión WiFi activa
+    if detect_current_wifi_connection; then
+        return 0
+    fi
+    
+    # Si no hay conexión activa, proceder con configuración manual
+    log "INFO" "Configurando nueva conexión WiFi"
     
     # Verificar soporte wifi
     if ! command -v iwctl &>/dev/null; then
@@ -739,31 +867,16 @@ setup_wifi_connection() {
     
     # Obtener interfaces wireless
     local wireless_interfaces
-    wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]"))
+    wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]+"))
     
     if ((${#wireless_interfaces[@]} == 0)); then
         log "ERROR" "No se detectaron interfaces wireless"
         return 1
     fi
     
-    # Mostrar interfaces disponibles
-    echo -e "\n${WHITE}Interfaces WiFi disponibles:${RESET}"
-    local i=1
-    for interface in "${wireless_interfaces[@]}"; do
-        echo -e "  ${CYAN}$i)${RESET} $interface"
-        ((i++))
-    done
-    
-    echo -ne "\n${YELLOW}Seleccione interfaz (1-${#wireless_interfaces[@]}):${RESET} "
-    read -r interface_number
-    
-    if ! [[ "$interface_number" =~ ^[0-9]+$ ]] || \
-       ((interface_number < 1 || interface_number > ${#wireless_interfaces[@]})); then
-        log "ERROR" "Selección inválida"
-        return 1
-    fi
-    
-    local selected_interface=${wireless_interfaces[$((interface_number-1))]}
+    # Usar primera interfaz disponible
+    local selected_interface=${wireless_interfaces[0]}
+    echo -e "${WHITE}Usando interfaz WiFi: $selected_interface${RESET}"
     
     # Escanear redes
     echo -e "\n${CYAN}Escaneando redes disponibles...${RESET}"
@@ -789,11 +902,66 @@ setup_wifi_connection() {
         sleep 3
         if ping -c 1 archlinux.org &>/dev/null; then
             log "SUCCESS" "Conexión WiFi establecida"
+            
+            # Guardar credenciales WiFi para post-instalación
+            mkdir -p /tmp/zeuspyec_install
+            cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
+# Configuración de Red ZeuspyEC
+# Este archivo contiene las credenciales de red usadas durante la instalación
+# Generado automáticamente el $(date)
+
+CONNECTION_TYPE=wifi
+WIFI_SSID=$ssid
+WIFI_PASSWORD=$password
+WIFI_INTERFACE=$selected_interface
+INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+            log "INFO" "Credenciales WiFi guardadas en network_credentials.txt"
             return 0
         fi
     fi
     
     log "ERROR" "No se pudo establecer la conexión WiFi"
+    return 1
+}
+
+# Función para configuración automática de red
+configure_network_automatic() {
+    log "DEBUG" "Intentando configuración automática de red"
+    
+    # Verificar si estamos en un LiveCD
+    if [[ -f /etc/arch-release ]]; then
+        # En LiveCD de Arch, usar dhcpcd para ethernet
+        echo -ne "  • Configurando Ethernet automático... "
+        if dhcpcd &>/dev/null; then
+            echo -e "${GREEN}✔${RESET}"
+            return 0
+        else
+            echo -e "${YELLOW}⚠${RESET}"
+        fi
+        
+        # Intentar NetworkManager si existe
+        if systemctl is-active NetworkManager &>/dev/null; then
+            echo -ne "  • Reiniciando NetworkManager... "
+            systemctl restart NetworkManager &>/dev/null && sleep 2
+            echo -e "${GREEN}✔${RESET}"
+        fi
+        
+        # Si hay WiFi disponible, intentar conectar
+        if command -v iwctl &>/dev/null; then
+            echo -ne "  • Escaneando WiFi... "
+            # Activar device si está desactivado
+            for device in wlan0 wlp*; do
+                if [[ -e /sys/class/net/$device ]]; then
+                    iwctl station "$device" scan &>/dev/null || true
+                    sleep 2
+                    echo -e "${GREEN}✔${RESET}"
+                    break
+                fi
+            done
+        fi
+    fi
+    
     return 1
 }
 
@@ -820,6 +988,19 @@ setup_ethernet_connection() {
             if ping -c 1 archlinux.org &>/dev/null; then
                 echo -e "${GREEN}✔${RESET}"
                 log "SUCCESS" "Conexión Ethernet establecida en $interface"
+                
+                # Guardar configuración ethernet para post-instalación
+                mkdir -p /tmp/zeuspyec_install
+                cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
+# Configuración de Red ZeuspyEC
+# Este archivo contiene las credenciales de red usadas durante la instalación
+# Generado automáticamente el $(date)
+
+CONNECTION_TYPE=ethernet
+ETHERNET_INTERFACE=$interface
+INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+                log "INFO" "Configuración Ethernet guardada en network_credentials.txt"
                 return 0
             fi
         fi
@@ -914,9 +1095,9 @@ prepare_disk() {
     # Verificar si el disco está en uso
     if is_disk_mounted "$TARGET_DISK"; then
         log "WARN" "El disco $TARGET_DISK tiene particiones montadas"
-        echo -e "${YELLOW}¿Desea intentar desmontar las particiones? (s/N):${RESET} "
+        echo -e "${YELLOW}¿Desea intentar desmontar las particiones? [S/n]:${RESET} "
         read -r response
-        if [[ "$response" =~ ^[Ss]$ ]]; then
+        if [[ ! "$response" =~ ^[Nn]$ ]]; then
             unmount_all "$TARGET_DISK"
         else
             return 1
@@ -962,9 +1143,9 @@ show_warning_message() {
     echo -e "${RED}║  Esta operación no se puede deshacer                              ║${RESET}"
     echo -e "${RED}╚════════════════════════════════════════════════════════════════════╝${RESET}"
     
-    echo -ne "\n${YELLOW}¿Está seguro que desea continuar? (s/N):${RESET} "
+    echo -ne "\n${YELLOW}¿Está seguro que desea continuar? [S/n]:${RESET} "
     read -r response
-    [[ "$response" =~ ^[Ss]$ ]] && return 0 || return 1
+    [[ ! "$response" =~ ^[Nn]$ ]] && return 0 || return 1
 }
 
 # Función para crear particiones GPT
@@ -1288,9 +1469,9 @@ verify_partitions() {
     
     if ! $all_mounted; then
         echo -e "\n${YELLOW}ADVERTENCIA: No todos los puntos de montaje están configurados${RESET}"
-        echo -e "¿Desea continuar de todos modos? (s/N): "
+        echo -e "¿Desea continuar de todos modos? [S/n]: "
         read -r response
-        if [[ ! "$response" =~ ^[Ss]$ ]]; then
+        if [[ "$response" =~ ^[Nn]$ ]]; then
             log "ERROR" "Instalación cancelada por el usuario"
             return 1
         fi
@@ -1344,11 +1525,32 @@ install_base_system() {
 install_essential_packages() {
     log "INFO" "Instalando paquetes esenciales"
     
-    # Verificar conexión antes de instalar
-    if ! ping -c 1 archlinux.org &>/dev/null; then
-        log "ERROR" "Sin conexión a Internet"
-        return 1
-    fi
+    # Verificar y asegurar conexión de red
+    echo -e "${CYAN}Verificando conexión de red...${RESET}"
+    local max_retries=3
+    local retry_count=0
+    
+    while ((retry_count < max_retries)); do
+        if ping -c 2 -W 3 archlinux.org &>/dev/null; then
+            echo -e "${GREEN}✔ Conexión verificada${RESET}"
+            break
+        else
+            ((retry_count++))
+            echo -e "${YELLOW}⚠ Sin conexión, intento $retry_count de $max_retries${RESET}"
+            
+            if ((retry_count < max_retries)); then
+                echo -e "${CYAN}Intentando reconfigurar la red...${RESET}"
+                
+                # Intentar configuración automática de red
+                configure_network_automatic
+                sleep 3
+            else
+                log "ERROR" "Sin conexión a Internet después de $max_retries intentos"
+                echo -e "${RED}✘ Configure manualmente la conexión de red y reinicie el script${RESET}"
+                return 1
+            fi
+        fi
+    done
     
     # Actualizar base de datos de pacman
     echo -e "${CYAN}Actualizando base de datos de pacman...${RESET}"
@@ -1357,40 +1559,14 @@ install_essential_packages() {
         return 1
     fi
     
-    # Lista completa de paquetes
+    # Solo paquetes esenciales para un sistema funcional
     local packages=(
-        # Sistema base
-        "${BASE_PACKAGES[@]}"
-        
-        # Utilidades básicas
-        "bash-completion"
-        "man-db"
-        "man-pages"
-        "texinfo"
-        "nano"
-        "vim"
-        "wget"
-        "curl"
-        
-        # Red
-        "networkmanager"
-        "network-manager-applet"
-        "wpa_supplicant"
-        "dialog"
-        "dhcpcd"
-        
-        # Audio
-        "pulseaudio"
-        "pulseaudio-alsa"
-        "alsa-utils"
-        
-        # Otros
-        "reflector"
-        "git"
-        "zip"
-        "unzip"
-        "htop"
+        "${ESSENTIAL_PACKAGES[@]}"
     )
+    
+    echo -e "\n${INFO}💡 Instalación Minimalista Activada${RESET}"
+    echo -e "${YELLOW}Solo se instalarán los paquetes esenciales para arrancar el sistema${RESET}"
+    echo -e "${YELLOW}Los paquetes adicionales se instalarán después del primer arranque${RESET}"
     
     echo -e "\n${WHITE}Paquetes a instalar:${RESET}"
     printf '%s\n' "${packages[@]}" | column | sed 's/^/  /'
@@ -1678,83 +1854,11 @@ configure_zeuspy_theme() {
     echo -e "${CYAN}║      Instalación Tema ZeuspyEC         ║${RESET}"
     echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
     
-    # Instalar paquetes base para BSPWM
-    local bspwm_packages=(
-        # WM y componentes básicos
-        "bspwm"
-        "sxhkd"
-        "polybar"
-        "picom"
-        "dunst"
-        "rofi"
-        "nitrogen"
-        
-        # Terminal y utilidades
-        "alacritty"
-        "ranger"
-        "neofetch"
-        "htop"
-        "feh"
-        "maim"
-        "xclip"
-        
-        # Fuentes
-        "ttf-dejavu"
-        "ttf-liberation"
-        "noto-fonts"
-        "ttf-hack"
-        "ttf-font-awesome"
-        
-        # Tema y GTK
-        "lxappearance"
-        "gtk-engine-murrine"
-        "arc-gtk-theme"
-        "papirus-icon-theme"
-        
-        # Multimedia
-        "brightnessctl"
-        "pulseaudio"
-        "pavucontrol"
-        "pamixer"
-        
-        # Desarrollo
-        "base-devel"
-        "git"
-        "wget"
-        "curl"
-        
-        # Utilidades del sistema
-        "networkmanager"
-        "network-manager-applet"
-        "bluez"
-        "bluez-utils"
-        "udiskie"
-        "ntfs-3g"
-        "gvfs"
-    )
+    echo -e "${INFO}🚀 Instalación Mínima: Tema ZeuspyEC${RESET}"
+    echo -e "${YELLOW}Los paquetes del entorno gráfico se instalarán después del primer arranque${RESET}"
+    echo -e "${YELLOW}mediante el script post-install.sh${RESET}"
     
-    echo -e "${WHITE}Instalando paquetes necesarios...${RESET}"
-    # Mostrar paquetes a instalar
-    printf '%s\n' "${bspwm_packages[@]}" | column | sed 's/^/  /'
-    
-    if ! arch-chroot /mnt pacman -S --noconfirm "${bspwm_packages[@]}"; then
-        log "ERROR" "Fallo al instalar paquetes necesarios"
-        return 1
-    fi
-    
-    # Crear estructura de directorios
-    echo -e "\n${CYAN}Creando estructura de directorios...${RESET}"
-    arch-chroot /mnt mkdir -p "/home/$USERNAME/.config"/{bspwm,sxhkd,polybar,picom,dunst,rofi,alacritty}
-    
-    # Descargar e instalar tema gh0stzk
-    echo -e "\n${CYAN}Descargando tema gh0stzk...${RESET}"
-    arch-chroot /mnt bash -c "cd /home/$USERNAME && \
-        curl -O https://raw.githubusercontent.com/gh0stzk/dotfiles/master/RiceInstaller && \
-        chmod +x RiceInstaller && \
-        chown $USERNAME:$USERNAME RiceInstaller && \
-        su - $USERNAME -c './RiceInstaller'"
-    
-    # Configurar autostart de BSPWM
+    # Configurar inicio básico del sistema
     echo -e "\n${CYAN}Configurando inicio automático...${RESET}"
     cat > "/mnt/home/$USERNAME/.xinitrc" <<EOF
 #!/bin/sh
@@ -1790,8 +1894,561 @@ EOF
         fi
     done
     
+    # Crear scripts post-instalación
+    echo -e "\n${CYAN}Creando scripts post-instalación...${RESET}"
+    create_post_install_script
+    create_standalone_post_install
+    
     log "SUCCESS" "Tema ZeuspyEC instalado correctamente"
     return 0
+}
+
+create_post_install_script() {
+    log "INFO" "Creando script post-instalación"
+    
+    # Crear script de post-instalación en el home del usuario
+    cat > "/mnt/home/$USERNAME/post-install.sh" <<'EOF'
+#!/bin/bash
+
+# Script de Post-Instalación ZeuspyEC
+# Instala paquetes adicionales y configuraciones después del primer arranque
+
+# Colores para output
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
+BLUE="\033[0;34m"
+CYAN="\033[0;36m"
+WHITE="\033[0;37m"
+RESET="\033[0m"
+
+echo -e "${BLUE}"
+echo "╔══════════════════════════════════════════════════════════════════╗"
+echo "║                   POST-INSTALACIÓN ZEUSPYEC                     ║"
+echo "║              Completando instalación del sistema                ║"
+echo "╚══════════════════════════════════════════════════════════════════╝"
+echo -e "${RESET}\n"
+
+# Configurar red automáticamente
+configure_network() {
+    echo -e "${CYAN}Configurando conexión de red...${RESET}"
+    
+    # Verificar si hay configuración guardada
+    if [ -f ~/network_credentials.txt ]; then
+        # Leer archivo de credenciales (ignorar comentarios)
+        while IFS='=' read -r key value; do
+            [[ $key =~ ^#.*$ ]] && continue  # Ignorar comentarios
+            [[ -z $key ]] && continue       # Ignorar líneas vacías
+            declare "$key=$value"
+        done < ~/network_credentials.txt
+        
+        if [ "$CONNECTION_TYPE" = "wifi" ] && [ -n "$WIFI_SSID" ] && [ -n "$WIFI_PASSWORD" ]; then
+            echo -e "${CYAN}Configurando WiFi: $WIFI_SSID${RESET}"
+            
+            # Iniciar NetworkManager si no está activo
+            sudo systemctl start NetworkManager 2>/dev/null
+            sleep 2
+            
+            # Conectar a WiFi usando nmcli
+            if nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD" 2>/dev/null; then
+                echo -e "${GREEN}✅ WiFi configurado correctamente${RESET}"
+                return 0
+            else
+                echo -e "${YELLOW}⚠ Intentando método alternativo...${RESET}"
+                # Método alternativo con iwctl
+                if command -v iwctl >/dev/null 2>&1; then
+                    iwctl station wlan0 connect "$WIFI_SSID" --passphrase "$WIFI_PASSWORD" 2>/dev/null && \
+                    echo -e "${GREEN}✅ WiFi configurado con iwctl${RESET}" && return 0
+                fi
+            fi
+            
+        elif [ "$CONNECTION_TYPE" = "ethernet" ] && [ -n "$ETHERNET_INTERFACE" ]; then
+            echo -e "${CYAN}Configurando Ethernet: $ETHERNET_INTERFACE${RESET}"
+            
+            # Activar interface y obtener IP
+            sudo ip link set "$ETHERNET_INTERFACE" up
+            sudo dhcpcd "$ETHERNET_INTERFACE" 2>/dev/null &
+            sleep 3
+            
+            if ping -c 1 archlinux.org >/dev/null 2>&1; then
+                echo -e "${GREEN}✅ Ethernet configurado correctamente${RESET}"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Si no hay configuración o falló, usar configuración automática
+    echo -e "${YELLOW}Intentando configuración automática...${RESET}"
+    
+    # Intentar ethernet primero
+    for interface in $(ip link show | grep -oE "en[a-zA-Z0-9]+" | head -1); do
+        sudo ip link set "$interface" up 2>/dev/null
+        sudo dhcpcd "$interface" 2>/dev/null &
+        sleep 3
+        if ping -c 1 archlinux.org >/dev/null 2>&1; then
+            echo -e "${GREEN}✅ Ethernet automático configurado${RESET}"
+            return 0
+        fi
+    done
+    
+    # Si ethernet falla, mostrar redes WiFi disponibles
+    echo -e "${CYAN}Redes WiFi disponibles:${RESET}"
+    if command -v nmcli >/dev/null 2>&1; then
+        sudo systemctl start NetworkManager 2>/dev/null
+        sleep 2
+        nmcli device wifi list 2>/dev/null | head -10
+        
+        echo -e "\n${YELLOW}Para conectar manualmente use:${RESET}"
+        echo -e "${WHITE}nmcli device wifi connect 'NOMBRE_RED' password 'CONTRASEÑA'${RESET}"
+    fi
+    
+    return 1
+}
+
+# Configurar red y verificar conexión
+configure_network
+if ! ping -c 3 archlinux.org >/dev/null 2>&1; then
+    echo -e "${RED}❌ Sin conexión a internet.${RESET}"
+    echo -e "${YELLOW}Configure manualmente la red y ejecute el script de nuevo.${RESET}"
+    echo -e "${WHITE}Comandos útiles:${RESET}"
+    echo -e "  • ${CYAN}nmcli device wifi list${RESET} - Ver redes disponibles"
+    echo -e "  • ${CYAN}nmcli device wifi connect 'RED' password 'CLAVE'${RESET} - Conectar WiFi"
+    echo -e "  • ${CYAN}sudo dhcpcd enp0s3${RESET} - Configurar ethernet (cambiar interfaz)"
+    exit 1
+fi
+echo -e "${GREEN}✅ Conexión verificada${RESET}\n"
+
+# Actualizar sistema
+echo -e "${CYAN}Actualizando sistema...${RESET}"
+sudo pacman -Syu --noconfirm
+
+# Instalar paquetes adicionales
+echo -e "\n${CYAN}Instalando paquetes adicionales...${RESET}"
+ADDITIONAL_PACKAGES=(
+    "base-devel"
+    "vim"
+    "git"
+    "wget"
+    "curl"
+    "htop"
+    "neofetch"
+    "bash-completion"
+    "man-db"
+    "man-pages"
+    "zip"
+    "unzip"
+    "reflector"
+    "python"
+    "python-pip"
+)
+
+for package in "${ADDITIONAL_PACKAGES[@]}"; do
+    echo -ne "${WHITE}Instalando $package...${RESET} "
+    if sudo pacman -S --noconfirm "$package" >/dev/null 2>&1; then
+        echo -e "${GREEN}✅${RESET}"
+    else
+        echo -e "${RED}❌${RESET}"
+    fi
+done
+
+# Instalar módulo tabulate para el script de redes WiFi
+echo -e "\n${CYAN}Instalando módulo Python para gestión WiFi...${RESET}"
+if command -v pip >/dev/null 2>&1; then
+    pip install tabulate --break-system-packages 2>/dev/null || \
+    pip install --user tabulate 2>/dev/null && \
+    echo -e "${GREEN}✅ Módulo tabulate instalado${RESET}" || \
+    echo -e "${YELLOW}⚠ No se pudo instalar tabulate (opcional)${RESET}"
+fi
+
+# Hacer ejecutable el script WiFi
+if [ -f ~/wifi_networks.py ]; then
+    chmod +x ~/wifi_networks.py
+    echo -e "${GREEN}✅ Script wifi_networks.py configurado${RESET}"
+fi
+
+# Instalar paquetes BSPWM (opcional)
+echo -e "\n${YELLOW}¿Desea instalar el entorno BSPWM completo? [S/n]:${RESET} "
+read -r install_bspwm
+if [[ ! "$install_bspwm" =~ ^[Nn]$ ]]; then
+    echo -e "${CYAN}Instalando entorno BSPWM...${RESET}"
+    
+    BSPWM_PACKAGES=(
+        "bspwm"
+        "sxhkd"
+        "polybar"
+        "picom"
+        "nitrogen"
+        "rofi"
+        "alacritty"
+        "dunst"
+        "brightnessctl"
+        "network-manager-applet"
+        "pulseaudio"
+        "pavucontrol"
+        "firefox"
+        "thunar"
+        "lxappearance"
+    )
+    
+    for package in "${BSPWM_PACKAGES[@]}"; do
+        echo -ne "${WHITE}Instalando $package...${RESET} "
+        if sudo pacman -S --noconfirm "$package" >/dev/null 2>&1; then
+            echo -e "${GREEN}✅${RESET}"
+        else
+            echo -e "${RED}❌${RESET}"
+        fi
+    done
+    
+    # Instalar tema gh0stzk
+    echo -e "\n${CYAN}Instalando tema gh0stzk...${RESET}"
+    cd ~ && \
+    curl -O https://raw.githubusercontent.com/gh0stzk/dotfiles/master/RiceInstaller && \
+    chmod +x RiceInstaller && \
+    ./RiceInstaller
+fi
+
+# Servicios adicionales
+echo -e "\n${CYAN}Habilitando servicios adicionales...${RESET}"
+ADDITIONAL_SERVICES=(
+    "bluetooth"
+    "sshd"
+    "fstrim.timer"
+)
+
+for service in "${ADDITIONAL_SERVICES[@]}"; do
+    echo -ne "${WHITE}Habilitando $service...${RESET} "
+    if sudo systemctl enable "$service" >/dev/null 2>&1; then
+        echo -e "${GREEN}✅${RESET}"
+    else
+        echo -e "${RED}❌${RESET}"
+    fi
+done
+
+# Configuración adicional de red
+echo -e "\n${CYAN}Configurando NetworkManager permanentemente...${RESET}"
+sudo systemctl enable NetworkManager
+
+echo -e "\n${GREEN}"
+echo "╔══════════════════════════════════════════════════════════════════╗"
+echo "║                  ✅ POST-INSTALACIÓN COMPLETADA                  ║"
+echo "║                                                                  ║"
+echo "║  El sistema está completamente configurado y listo para usar.   ║"
+echo "║                                                                  ║"
+echo "║  📶 GESTIÓN DE REDES WiFi:                                       ║"
+echo "║  • ./wifi_networks.py - Ver y obtener claves WiFi guardadas     ║"
+echo "║  • nmcli device wifi list - Listar redes disponibles            ║"
+echo "║  • nmcli device wifi connect 'RED' password 'CLAVE' - Conectar  ║"
+echo "║                                                                  ║"
+echo "║  Para ejecutar este script nuevamente: ./post-install.sh        ║"
+echo "╚══════════════════════════════════════════════════════════════════╝"
+echo -e "${RESET}"
+
+# Auto-eliminar script después de uso exitoso
+echo -e "${YELLOW}¿Desea eliminar este script? [S/n]:${RESET} "
+read -r delete_script
+if [[ ! "$delete_script" =~ ^[Nn]$ ]]; then
+    rm -f "$0"
+    echo -e "${GREEN}Script eliminado.${RESET}"
+fi
+EOF
+    
+    # Hacer ejecutable el script
+    chmod +x "/mnt/home/$USERNAME/post-install.sh"
+    
+    # Cambiar propietario
+    arch-chroot /mnt chown "$USERNAME:$USERNAME" "/home/$USERNAME/post-install.sh"
+    
+    # Crear mensaje de bienvenida
+    cat > "/mnt/home/$USERNAME/.bashrc_post_install" <<EOF
+
+# Mensaje de post-instalación (se elimina después del primer uso)
+if [ -f ~/post-install.sh ]; then
+    echo -e "\033[0;33m"
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║                     ⚡ INSTALACIÓN BÁSICA                        ║"
+    echo "║                                                                  ║"
+    echo "║  Para completar la instalación ejecuta: ./post-install.sh       ║"
+    echo "║                                                                  ║"
+    echo "║  Esto instalará paquetes adicionales y el entorno BSPWM         ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo -e "\033[0m"
+fi
+EOF
+    
+    # Añadir al .bashrc principal
+    echo "" >> "/mnt/home/$USERNAME/.bashrc"
+    echo "# Post-instalación" >> "/mnt/home/$USERNAME/.bashrc"
+    echo "source ~/.bashrc_post_install 2>/dev/null" >> "/mnt/home/$USERNAME/.bashrc"
+    
+    arch-chroot /mnt chown "$USERNAME:$USERNAME" "/home/$USERNAME/.bashrc_post_install"
+    
+    # Copiar configuración de red si existe
+    if [ -f /tmp/zeuspyec_install/network_credentials.txt ]; then
+        cp /tmp/zeuspyec_install/network_credentials.txt "/mnt/home/$USERNAME/network_credentials.txt"
+        arch-chroot /mnt chown "$USERNAME:$USERNAME" "/home/$USERNAME/network_credentials.txt"
+        log "INFO" "Archivo network_credentials.txt copiado al sistema instalado"
+    fi
+    
+    # Copiar el script wifi_networks.py si existe
+    if [ -f wifi_networks.py ]; then
+        cp wifi_networks.py "/mnt/home/$USERNAME/wifi_networks.py"
+        chmod +x "/mnt/home/$USERNAME/wifi_networks.py"
+        arch-chroot /mnt chown "$USERNAME:$USERNAME" "/home/$USERNAME/wifi_networks.py"
+        log "INFO" "Script wifi_networks.py copiado al sistema"
+    fi
+    
+    log "SUCCESS" "Script post-instalación creado en /home/$USERNAME/post-install.sh"
+}
+
+create_standalone_post_install() {
+    log "INFO" "Creando script post-instalación independiente"
+    
+    # Crear script independiente que se puede usar desde GitHub
+    cat > "/mnt/home/$USERNAME/zeuspyec-post-install.sh" <<'SCRIPT_EOF'
+#!/bin/bash
+
+# Script de Post-Instalación ZeuspyEC (Independiente)
+# Puede ejecutarse después de cualquier instalación básica de Arch Linux
+# Para descargar: curl -O https://raw.githubusercontent.com/tu-usuario/repo/main/zeuspyec-post-install.sh
+
+# Colores para output
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
+BLUE="\033[0;34m"
+CYAN="\033[0;36m"
+WHITE="\033[0;37m"
+RESET="\033[0m"
+
+echo -e "${BLUE}"
+echo "╔══════════════════════════════════════════════════════════════════╗"
+echo "║                   POST-INSTALACIÓN ZEUSPYEC                     ║"
+echo "║              Completando instalación del sistema                ║"
+echo "║                Script independiente v1.0                        ║"
+echo "╚══════════════════════════════════════════════════════════════════╝"
+echo -e "${RESET}\n"
+
+# Función para configurar red automáticamente
+configure_network() {
+    echo -e "${CYAN}Configurando conexión de red...${RESET}"
+    
+    # Verificar si hay configuración guardada de instalación previa
+    if [ -f ~/network_credentials.txt ]; then
+        echo -e "${GREEN}✅ Archivo de credenciales encontrado${RESET}"
+        
+        # Leer archivo de credenciales (ignorar comentarios)
+        while IFS='=' read -r key value; do
+            [[ $key =~ ^#.*$ ]] && continue  # Ignorar comentarios
+            [[ -z $key ]] && continue       # Ignorar líneas vacías
+            declare "$key=$value"
+        done < ~/network_credentials.txt
+        
+        if [ "$CONNECTION_TYPE" = "wifi" ] && [ -n "$WIFI_SSID" ] && [ -n "$WIFI_PASSWORD" ]; then
+            echo -e "${CYAN}Configurando WiFi guardado: $WIFI_SSID${RESET}"
+            
+            # Iniciar NetworkManager si no está activo
+            sudo systemctl start NetworkManager 2>/dev/null
+            sleep 2
+            
+            # Conectar a WiFi usando nmcli
+            if nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD" 2>/dev/null; then
+                echo -e "${GREEN}✅ WiFi configurado correctamente${RESET}"
+                return 0
+            else
+                echo -e "${YELLOW}⚠ Reintentando con método alternativo...${RESET}"
+                # Método alternativo con iwctl
+                if command -v iwctl >/dev/null 2>&1; then
+                    iwctl station wlan0 connect "$WIFI_SSID" --passphrase "$WIFI_PASSWORD" 2>/dev/null && \
+                    echo -e "${GREEN}✅ WiFi configurado con iwctl${RESET}" && return 0
+                fi
+            fi
+            
+        elif [ "$CONNECTION_TYPE" = "ethernet" ] && [ -n "$ETHERNET_INTERFACE" ]; then
+            echo -e "${CYAN}Configurando Ethernet guardado: $ETHERNET_INTERFACE${RESET}"
+            
+            # Activar interface y obtener IP
+            sudo ip link set "$ETHERNET_INTERFACE" up
+            sudo dhcpcd "$ETHERNET_INTERFACE" 2>/dev/null &
+            sleep 3
+            
+            if ping -c 1 archlinux.org >/dev/null 2>&1; then
+                echo -e "${GREEN}✅ Ethernet configurado correctamente${RESET}"
+                return 0
+            fi
+        fi
+    else
+        echo -e "${YELLOW}⚠ No se encontró archivo de credenciales previas${RESET}"
+    fi
+    
+    # Configuración manual/automática
+    echo -e "${YELLOW}Configurando red manualmente...${RESET}"
+    
+    # Preguntar tipo de conexión
+    echo -e "\n${CYAN}Tipo de conexión:${RESET}"
+    echo -e "  ${WHITE}1)${RESET} Ethernet (automático)"
+    echo -e "  ${WHITE}2)${RESET} WiFi (manual)"
+    echo -e "  ${WHITE}3)${RESET} Saltar configuración"
+    echo -ne "\n${YELLOW}Seleccione opción (1-3):${RESET} "
+    read -r network_choice
+    
+    case $network_choice in
+        1)
+            # Configurar ethernet automáticamente
+            echo -e "${CYAN}Configurando ethernet...${RESET}"
+            for interface in $(ip link show | grep -oE "en[a-zA-Z0-9]+" | head -1); do
+                sudo ip link set "$interface" up 2>/dev/null
+                sudo dhcpcd "$interface" 2>/dev/null &
+                sleep 3
+                if ping -c 1 archlinux.org >/dev/null 2>&1; then
+                    echo -e "${GREEN}✅ Ethernet configurado${RESET}"
+                    return 0
+                fi
+            done
+            ;;
+        2)
+            # Configurar WiFi manualmente
+            echo -e "${CYAN}Configurando WiFi...${RESET}"
+            sudo systemctl start NetworkManager 2>/dev/null
+            sleep 2
+            
+            echo -e "\n${CYAN}Redes WiFi disponibles:${RESET}"
+            nmcli device wifi list 2>/dev/null | head -10
+            
+            echo -ne "\n${YELLOW}SSID de la red:${RESET} "
+            read -r manual_ssid
+            echo -ne "${YELLOW}Contraseña:${RESET} "
+            read -rs manual_password
+            echo
+            
+            if nmcli device wifi connect "$manual_ssid" password "$manual_password" 2>/dev/null; then
+                echo -e "${GREEN}✅ WiFi configurado manualmente${RESET}"
+                return 0
+            fi
+            ;;
+        3)
+            echo -e "${YELLOW}⚠ Configuración de red omitida${RESET}"
+            return 1
+            ;;
+    esac
+    
+    return 1
+}
+
+# Verificar privilegios sudo
+if ! sudo -n true 2>/dev/null; then
+    echo -e "${YELLOW}Este script requiere privilegios sudo${RESET}"
+    echo -e "${WHITE}Por favor, ingrese su contraseña:${RESET}"
+    sudo true
+fi
+
+# Configurar red
+configure_network
+if ! ping -c 3 archlinux.org >/dev/null 2>&1; then
+    echo -e "${RED}❌ Sin conexión a internet.${RESET}"
+    echo -e "${YELLOW}Configure manualmente la red y ejecute el script de nuevo.${RESET}"
+    echo -e "\n${WHITE}Comandos útiles:${RESET}"
+    echo -e "  • ${CYAN}nmcli device wifi list${RESET} - Ver redes WiFi"
+    echo -e "  • ${CYAN}nmcli device wifi connect 'RED' password 'CLAVE'${RESET} - Conectar WiFi"
+    echo -e "  • ${CYAN}sudo dhcpcd enp0s3${RESET} - Configurar ethernet"
+    exit 1
+fi
+echo -e "${GREEN}✅ Conexión verificada${RESET}\n"
+
+# Actualizar sistema
+echo -e "${CYAN}Actualizando sistema...${RESET}"
+sudo pacman -Syu --noconfirm
+
+# Instalar paquetes esenciales
+echo -e "\n${CYAN}Instalando paquetes esenciales...${RESET}"
+ESSENTIAL_PACKAGES=(
+    "base-devel"
+    "git"
+    "wget"
+    "curl"
+    "vim"
+    "htop"
+    "neofetch"
+    "python"
+    "python-pip"
+    "bash-completion"
+    "man-db"
+    "zip"
+    "unzip"
+)
+
+for package in "${ESSENTIAL_PACKAGES[@]}"; do
+    echo -ne "${WHITE}Instalando $package...${RESET} "
+    if sudo pacman -S --noconfirm "$package" >/dev/null 2>&1; then
+        echo -e "${GREEN}✅${RESET}"
+    else
+        echo -e "${RED}❌${RESET}"
+    fi
+done
+
+# Preguntar por BSPWM
+echo -e "\n${YELLOW}¿Instalar entorno gráfico BSPWM? [S/n]:${RESET} "
+read -r install_bspwm
+if [[ ! "$install_bspwm" =~ ^[Nn]$ ]]; then
+    echo -e "${CYAN}Instalando entorno BSPWM...${RESET}"
+    
+    BSPWM_PACKAGES=(
+        "xorg" "xorg-xinit"
+        "bspwm" "sxhkd"
+        "polybar" "picom"
+        "rofi" "nitrogen"
+        "alacritty" "firefox"
+        "thunar" "lxappearance"
+        "pulseaudio" "pavucontrol"
+    )
+    
+    for package in "${BSPWM_PACKAGES[@]}"; do
+        echo -ne "${WHITE}Instalando $package...${RESET} "
+        if sudo pacman -S --noconfirm "$package" >/dev/null 2>&1; then
+            echo -e "${GREEN}✅${RESET}"
+        else
+            echo -e "${RED}❌${RESET}"
+        fi
+    done
+    
+    # Instalar tema
+    echo -e "\n${CYAN}¿Instalar tema gh0stzk? [S/n]:${RESET} "
+    read -r install_theme
+    if [[ ! "$install_theme" =~ ^[Nn]$ ]]; then
+        cd ~ && \
+        curl -O https://raw.githubusercontent.com/gh0stzk/dotfiles/master/RiceInstaller && \
+        chmod +x RiceInstaller && \
+        echo -e "${GREEN}✅ Tema descargado. Ejecute: ./RiceInstaller${RESET}"
+    fi
+fi
+
+# Configurar servicios
+echo -e "\n${CYAN}Configurando servicios...${RESET}"
+sudo systemctl enable NetworkManager
+sudo systemctl enable bluetooth 2>/dev/null
+
+echo -e "\n${GREEN}"
+echo "╔══════════════════════════════════════════════════════════════════╗"
+echo "║                  ✅ POST-INSTALACIÓN COMPLETADA                  ║"
+echo "║                                                                  ║"
+echo "║  🎯 PRÓXIMOS PASOS:                                              ║"
+echo "║  • Reiniciar el sistema                                          ║"
+echo "║  • Si instaló BSPWM: ./RiceInstaller (para el tema)             ║"
+echo "║  • Configurar aplicaciones adicionales                          ║"
+echo "╚══════════════════════════════════════════════════════════════════╝"
+echo -e "${RESET}"
+
+echo -e "${YELLOW}¿Reiniciar ahora? [S/n]:${RESET} "
+read -r reboot_now
+if [[ ! "$reboot_now" =~ ^[Nn]$ ]]; then
+    sudo reboot
+fi
+SCRIPT_EOF
+
+    # Hacer ejecutable el script independiente
+    chmod +x "/mnt/home/$USERNAME/zeuspyec-post-install.sh"
+    arch-chroot /mnt chown "$USERNAME:$USERNAME" "/home/$USERNAME/zeuspyec-post-install.sh"
+    
+    log "SUCCESS" "Script independiente creado: zeuspyec-post-install.sh"
 }
 
 generate_installation_report() {
@@ -1894,10 +2551,10 @@ show_post_install_message() {
     echo -e "  • ${CYAN}Win + Alt + Q${RESET}: Cerrar sesión"
     
     # Preguntar por reinicio
-    echo -e "\n${YELLOW}¿Desea reiniciar el sistema ahora? (s/N):${RESET} "
+    echo -e "\n${YELLOW}¿Desea reiniciar el sistema ahora? [S/n]:${RESET} "
     read -r reboot_choice
     
-    if [[ "$reboot_choice" =~ ^[Ss]$ ]]; then
+    if [[ ! "$reboot_choice" =~ ^[Nn]$ ]]; then
         log "INFO" "Reiniciando sistema"
         cleanup
         reboot
@@ -2005,10 +2662,10 @@ error_handler() {
     echo -e "${WHITE}Comando:${RESET} $last_command"
     echo -e "${WHITE}Traza de función:${RESET} ${func_trace#::}"
     
-    echo -e "\n${YELLOW}¿Desea intentar continuar? (s/N):${RESET} "
+    echo -e "\n${YELLOW}¿Desea intentar continuar? [S/n]:${RESET} "
     read -r response
     
-    if [[ "$response" =~ ^[Ss]$ ]]; then
+    if [[ ! "$response" =~ ^[Nn]$ ]]; then
         log "WARN" "Continuando después del error..."
         return 0
     else
@@ -2030,9 +2687,9 @@ retry_command() {
             return 0
         else
             if ((attempt == max_attempts)); then
-                echo -e "\n${YELLOW}¿Desea reintentar '$*'? (s/N):${RESET} "
+                echo -e "\n${YELLOW}¿Desea reintentar '$*'? [S/n]:${RESET} "
                 read -r response
-                if [[ "$response" =~ ^[Ss]$ ]]; then
+                if [[ ! "$response" =~ ^[Nn]$ ]]; then
                     max_attempts=$((max_attempts + 1))
                 else
                     return 1

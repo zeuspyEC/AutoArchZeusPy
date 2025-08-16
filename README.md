@@ -1,298 +1,356 @@
-# AutoArchZ
-This is a autoinstall for Arch users... Can use for UEFI and BIOS.
+# 🚀 AutoArchZeusPy - Instalador Automático de Arch Linux
 
-## Installation
-1. Update the system packages:
-```
-pacman -Sy
-```
-2. Install `curl`:
-```
-pacman -S curl
-```
-3. Download and run the `run.sh` script:
-```
+> **Instalador inteligente y minimalista para Arch Linux con soporte completo UEFI/BIOS y configuración automática de red**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Shell Script](https://img.shields.io/badge/shell-bash-green.svg)](https://www.gnu.org/software/bash/)
+[![Arch Linux](https://img.shields.io/badge/OS-Arch%20Linux-blue.svg)](https://archlinux.org/)
+
+---
+
+## 🎯 Características Principales
+
+### ✨ **Instalación Inteligente**
+- 🔍 **Detección automática** UEFI/BIOS con 6 métodos de verificación
+- 🚀 **Instalación minimalista** - Solo paquetes esenciales durante instalación
+- 📦 **Post-instalación inteligente** - Paquetes adicionales después del primer arranque
+- 📶 **Configuración automática de red** - Detecta y reutiliza credenciales WiFi del modo live
+
+### 🛡️ **Confiabilidad**
+- ✅ UEFI → GPT (automático) | BIOS → MBR (automático)
+- 🔄 Retry automático en comandos críticos
+- 📝 Logging detallado con archivos de log
+- 🛠️ Recuperación ante errores de red
+
+### 🎨 **Facilidad de Uso**
+- ⌨️ **Enter = Sí** en todas las confirmaciones
+- 🔧 **Sin configuración manual** de particiones
+- 🏠 **Scripts listos** en el home del usuario
+- 📱 **Interfaz intuitiva** con colores y barras de progreso
+
+---
+
+## ⚡ Instalación Rápida
+
+### 🔥 **Método 1: Instalación Completa (Recomendado)**
+
+```bash
+# Desde el modo live de Arch Linux
+pacman -Sy curl dos2unix
 curl -L https://raw.githubusercontent.com/zeuspyEC/AutoArchZeusPy/main/run.sh -o run.sh
-```
-4. Use dos2unix to convert file `run.py` to Unix format
-```
-pacman -S dos2unix
 dos2unix run.sh
-```
-5. Run and enjoy
-```
 chmod +x run.sh
 ./run.sh
 ```
 
-The script will handle the automated installation of Arch Linux on your system.
+### 📦 **Método 2: Solo Post-Instalación**
 
-## Features
-- Compatible with UEFI and BIOS systems
-- Automated installation of Arch Linux
-- Simplifies the installation process for new users
-
-## Contribution
-If you find any issues or have suggestions for improvements, please create an issue or submit a pull request on the GitHub repository:
-https://github.com/zeuspyEC/AutoArchZeusPy
-
-
-### Métodos de Detección (en orden de prioridad):
-1. **`/sys/firmware/efi/efivars`** - Más confiable
-2. **`efibootmgr`** - Verificación secundaria
-3. **`dmesg | grep "EFI v"`** - Logs del kernel
-4. **`dmidecode -t bios`** - Información del BIOS
-5. **Tabla de particiones existente** - GPT = UEFI, MBR = BIOS
-6. **Partición EFI montada** - `/boot/efi` o `/efi`
-
-### Validación Automática:
-- Si detecta UEFI pero falta `/sys/firmware/efi` → Error y confirmación
-- Si detecta BIOS pero existe `/sys/firmware/efi/efivars` → Cambia a UEFI
-- Fallback seguro: Si no puede determinar → BIOS Legacy
-
----
-
-## ⚡ FLUJO PARA SISTEMA UEFI
-
-### 1. **Detección**
 ```bash
-detect_boot_mode() → BOOT_MODE="UEFI"
-validate_boot_mode_detection() → Confirma UEFI
-```
-
-### 2. **Esquema de Particionamiento**
-- **Automático**: GPT (no hay opción de elegir)
-- Mensaje: `"Modo UEFI detectado - usando esquema GPT"`
-
-### 3. **Creación de Particiones** (`create_gpt_partitions`)
-```bash
-parted -s $DISK mklabel gpt
-
-# Partición 1: EFI
-mkpart "EFI" fat32 1MiB 300MiB
-set 1 esp on
-
-# Partición 2: ROOT  
-mkpart "ROOT" ext4 300MiB -4GiB
-
-# Partición 3: SWAP
-mkpart "SWAP" linux-swap -4GiB 100%
-```
-
-### 4. **Formateo**
-```bash
-mkfs.fat -F32 /dev/sdX1    # EFI - FAT32
-mkfs.ext4 /dev/sdX2        # ROOT - EXT4
-mkswap /dev/sdX3           # SWAP
-swapon /dev/sdX3
-```
-
-### 5. **Montaje**
-```bash
-mount /dev/sdX2 /mnt               # ROOT
-mkdir -p /mnt/boot/efi
-mount /dev/sdX1 /mnt/boot/efi      # EFI
-```
-
-### 6. **Instalación Base**
-```bash
-pacstrap /mnt base base-devel linux linux-firmware
-pacstrap /mnt efibootmgr grub networkmanager
-```
-
-### 7. **Configuración GRUB**
-```bash
-arch-chroot /mnt grub-install \
-    --target=x86_64-efi \
-    --efi-directory=/boot/efi \
-    --bootloader-id=GRUB \
-    --recheck
-
-arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
-```
-
-### 8. **Verificación Final**
-- Verifica `/mnt/boot/efi/EFI/GRUB/grubx64.efi` existe
-- Verifica entradas EFI con `efibootmgr -v`
-
----
-
-## 🖥️ FLUJO PARA SISTEMA BIOS LEGACY
-
-### 1. **Detección**
-```bash
-detect_boot_mode() → BOOT_MODE="BIOS"  
-validate_boot_mode_detection() → Confirma BIOS
-```
-
-### 2. **Esquema de Particionamiento**
-- **Automático**: MBR/DOS (no hay opción de elegir)
-- Mensaje: `"Modo BIOS Legacy detectado - usando esquema MBR"`
-
-### 3. **Creación de Particiones** (`create_mbr_partitions`)
-```bash
-parted -s $DISK mklabel msdos
-
-# Partición 1: BOOT
-mkpart primary ext4 1MiB 512MiB
-set 1 boot on
-
-# Partición 2: ROOT
-mkpart primary ext4 512MiB -4GiB  
-
-# Partición 3: SWAP
-mkpart primary linux-swap -4GiB 100%
-```
-
-### 4. **Formateo**
-```bash
-mkfs.ext4 /dev/sdX1        # BOOT - EXT4
-mkfs.ext4 /dev/sdX2        # ROOT - EXT4
-mkswap /dev/sdX3           # SWAP
-swapon /dev/sdX3
-```
-
-### 5. **Montaje**
-```bash
-mount /dev/sdX2 /mnt        # ROOT
-mkdir -p /mnt/boot
-mount /dev/sdX1 /mnt/boot   # BOOT
-```
-
-### 6. **Instalación Base**
-```bash
-pacstrap /mnt base base-devel linux linux-firmware
-pacstrap /mnt grub networkmanager
-```
-
-### 7. **Configuración GRUB**
-```bash
-arch-chroot /mnt grub-install \
-    --target=i386-pc \
-    --recheck \
-    /dev/sdX
-
-arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
-```
-
-### 8. **Verificación Final**
-- Verifica `/mnt/boot/grub` existe
-- Verifica MBR instalado en disco
-
----
-
-## 📊 TABLA COMPARATIVA
-
-| Aspecto | UEFI | BIOS Legacy |
-|---------|------|-------------|
-| **Detección** | `/sys/firmware/efi/efivars` existe | No existe `/sys/firmware/efi/efivars` |
-| **Tabla Particiones** | GPT (obligatorio) | MBR/DOS (obligatorio) |
-| **Partición Boot** | `/boot/efi` (FAT32, 300MB) | `/boot` (EXT4, 512MB) |
-| **Flag Boot** | `esp on` en partición EFI | `boot on` en partición BOOT |
-| **GRUB Target** | `x86_64-efi` | `i386-pc` |
-| **GRUB Install** | En partición EFI | En MBR del disco |
-| **Directorio GRUB** | `/boot/efi/EFI/GRUB/` | `/boot/grub/` |
-| **Verificación** | `efibootmgr -v` | Sector de arranque MBR |
-
----
-
-## 🔄 FLUJO DE DECISIÓN AUTOMÁTICO
-
-```
-INICIO
-   ↓
-[Detectar Modo de Arranque]
-   ↓
-¿Existe /sys/firmware/efi/efivars?
-   ├─ SÍ → UEFI
-   │   ├─ Tabla: GPT
-   │   ├─ Particiones: EFI + ROOT + SWAP
-   │   ├─ Montaje: /mnt/boot/efi
-   │   └─ GRUB: x86_64-efi
-   │
-   └─ NO → BIOS
-       ├─ Tabla: MBR
-       ├─ Particiones: BOOT + ROOT + SWAP
-       ├─ Montaje: /mnt/boot
-       └─ GRUB: i386-pc
+# En sistema Arch ya instalado
+curl -O https://raw.githubusercontent.com/zeuspyEC/AutoArchZeusPy/main/zeuspyec-post-install.sh
+chmod +x zeuspyec-post-install.sh
+./zeuspyec-post-install.sh
 ```
 
 ---
 
-## ✅ VALIDACIONES IMPLEMENTADAS
+## 🔄 Flujo de Instalación
 
-### Durante la Detección:
-- ✓ Múltiples métodos de detección con fallback
-- ✓ Validación cruzada de consistencia
-- ✓ Logging detallado de cada método usado
+```
+🔥 Modo Live → 📶 WiFi Activo → 📋 Script Detecta Credenciales
+     ↓                ↓                      ↓
+💾 Instalación → 📁 Crear Scripts → 🔄 Primer Arranque
+   Mínima         Post-Install        ↓
+     ↓               ↓             🚀 ./post-install.sh
+🎨 Sistema Base → 🌐 Red Auto → 🎨 Sistema Completo
+```
 
-### Durante el Particionado:
-- ✓ No permite elegir esquema incorrecto
-- ✓ Tamaños automáticos según RAM disponible
-- ✓ Verificación de particiones creadas
+### 📊 **Instalación en 2 Fases**
 
-### Durante el Montaje:
-- ✓ Función unificada `mount_partitions()`
-- ✓ Verificación de puntos de montaje
-- ✓ Creación automática de directorios
-
-### Durante GRUB:
-- ✓ Parámetros específicos según modo
-- ✓ Verificación de archivos instalados
-- ✓ Configuración automática
+| Fase | Contenido | Tiempo | Paquetes |
+|------|-----------|--------|----------|
+| **Instalación Base** | Sistema funcional mínimo | ~5-10 min | 8 esenciales |
+| **Post-Instalación** | Entorno gráfico + extras | ~15-20 min | 30+ adicionales |
 
 ---
 
-## 🛠️ COMANDOS DE VERIFICACIÓN MANUAL
+## 📶 Sistema de Red Automático
 
-### Para verificar el modo actual:
+### 🧠 **¡La Magia del Script!**
+
+**NO necesitas configurar WiFi manualmente**. El script detecta automáticamente la red que ya estás usando en el modo live:
+
 ```bash
-# Método 1
+# 🔍 Lo que hace automáticamente:
+1. 📡 Detecta la red WiFi activa (nmcli/iwctl)
+2. 🔑 Obtiene SSID y contraseña (cuando es posible)
+3. 💾 Guarda todo en network_credentials.txt
+4. 📋 Copia el archivo al sistema instalado
+5. 🚀 En el primer arranque: reconecta automáticamente
+```
+
+### 📄 **Archivo de Credenciales (Creado Automáticamente)**
+
+```txt
+# network_credentials.txt
+CONNECTION_TYPE=wifi
+WIFI_SSID=MiRedWiFi
+WIFI_PASSWORD=miClaveSecreta123
+WIFI_INTERFACE=wlan0
+INSTALL_DATE=2025-01-15 14:30:45
+```
+
+### 🔧 **Métodos de Detección Soportados**
+
+- 🌐 **nmcli**: NetworkManager (método principal)
+- 📡 **iwctl**: iwd (método alternativo)
+- 🔌 **dhcpcd**: Ethernet automático
+- 🛠️ **Manual**: Solo si falla la detección automática
+
+---
+
+## 🎨 Scripts Creados Automáticamente
+
+### 📁 **En `/home/usuario/` encontrarás:**
+
+| Script | Función | Comando |
+|--------|---------|---------|
+| `post-install.sh` | Instalación completa con red automática | `./post-install.sh` |
+| `zeuspyec-post-install.sh` | Script independiente (funciona sin instalador) | `./zeuspyec-post-install.sh` |
+| `wifi_networks.py` | Ver redes WiFi guardadas con contraseñas | `./wifi_networks.py` |
+| `network_credentials.txt` | Credenciales de la instalación | *datos de red* |
+
+### 🚀 **Contenido del Post-Install**
+
+```bash
+# 📦 Paquetes Esenciales
+base-devel git wget curl vim htop neofetch python bash-completion
+
+# 🎨 Entorno BSPWM (Opcional)
+xorg bspwm sxhkd polybar picom rofi nitrogen alacritty firefox
+
+# 🎯 Tema gh0stzk (Opcional)  
+RiceInstaller automático con todos los temas
+
+# 🔧 Servicios
+NetworkManager bluetooth fstrim.timer
+```
+
+### 💡 **Gestión WiFi Post-Instalación**
+
+```bash
+# 📶 Ver todas las redes WiFi guardadas (con contraseñas)
+./wifi_networks.py
+
+# 🔍 Conectar a nueva red
+nmcli device wifi connect "NOMBRE_RED" password "CONTRASEÑA"
+
+# 📋 Ver redes disponibles
+nmcli device wifi list
+
+# 🔧 Estado de NetworkManager
+nmcli device status
+```
+
+---
+
+## 🔧 Soporte UEFI/BIOS
+
+### 🎯 **Detección Automática Robusta**
+
+El script usa **6 métodos de detección** en orden de prioridad:
+
+```bash
+1. /sys/firmware/efi/efivars     # Más confiable
+2. efibootmgr                    # Verificación EFI
+3. dmesg | grep "EFI"           # Logs del kernel  
+4. dmidecode -t bios            # Info del BIOS
+5. Tabla de particiones         # GPT = UEFI, MBR = BIOS
+6. Partición EFI montada        # /boot/efi existe
+```
+
+### ⚙️ **Configuración Automática por Modo**
+
+| Aspecto | 🖥️ UEFI | 💻 BIOS Legacy |
+|---------|----------|---------------|
+| **Detección** | `/sys/firmware/efi/efivars` existe | No existe efivars |
+| **Particiones** | GPT (automático) | MBR (automático) |
+| **Boot** | `/boot/efi` (FAT32, 300MB) | `/boot` (EXT4, 512MB) |
+| **GRUB** | `x86_64-efi` | `i386-pc` |
+| **Montaje** | `/mnt/boot/efi` | `/mnt/boot` |
+
+### 🔄 **Flujo de Decisión**
+
+```
+Inicio → Detección Modo
+    ↓
+¿UEFI detectado?
+├─ ✅ SÍ: GPT + EFI + x86_64-efi + /boot/efi
+└─ ❌ NO:  MBR + BOOT + i386-pc + /boot
+    ↓
+Validación cruzada → Instalación automática
+```
+
+---
+
+## 📋 Paquetes por Fase
+
+### **Fase 1: Instalación Base (Modo Live)**
+```bash
+ESSENTIAL_PACKAGES=(
+    "base"           # Sistema base
+    "linux"          # Kernel
+    "linux-firmware" # Firmware
+    "networkmanager" # Red
+    "grub"           # Bootloader
+    "efibootmgr"     # UEFI (si aplica)
+    "sudo"           # Privilegios
+    "nano"           # Editor básico
+)
+```
+
+### **Fase 2: Post-Instalación (Primer Arranque)**
+```bash
+ADDITIONAL_PACKAGES=(
+    "base-devel" "git" "wget" "curl" "vim" 
+    "htop" "neofetch" "python" "bash-completion"
+    "man-db" "zip" "unzip" "reflector"
+)
+
+BSPWM_PACKAGES=(
+    "xorg" "bspwm" "sxhkd" "polybar" "picom"
+    "rofi" "nitrogen" "alacritty" "firefox" "thunar"
+)
+```
+
+---
+
+## 🛠️ Comandos Útiles
+
+### 🔍 **Verificación del Sistema**
+
+```bash
+# Ver modo actual
 [ -d /sys/firmware/efi/efivars ] && echo "UEFI" || echo "BIOS"
 
-# Método 2  
-efibootmgr && echo "UEFI" || echo "BIOS"
+# Ver particiones
+lsblk -f
 
-# Método 3
-dmesg | grep -E "EFI|BIOS"
+# Estado de red
+nmcli device status
+nmcli connection show
+
+# Logs de instalación
+tail -f /tmp/zeuspyec_installer.log
 ```
 
-### Para verificar la tabla de particiones:
-```bash
-# Ver tipo de tabla
-parted /dev/sdX print | grep "Partition Table"
+### 🚨 **Solución de Problemas**
 
-# GPT = UEFI típicamente
-# msdos = BIOS típicamente
+```bash
+# Error de red durante instalación
+sudo systemctl restart NetworkManager
+nmcli device wifi connect "RED" password "CLAVE"
+
+# Reiniciar post-instalación
+./zeuspyec-post-install.sh
+
+# Ver credenciales guardadas
+cat ~/network_credentials.txt
+
+# Mostrar redes WiFi con contraseñas
+./wifi_networks.py
 ```
 
 ---
 
-## 📝 NOTAS IMPORTANTES
+## 🎯 Ventajas del Sistema
 
-1. **El script NO permite**:
-   - Usar MBR con UEFI
-   - Usar GPT con BIOS (aunque técnicamente es posible)
-   - Elegir manualmente el esquema (es automático)
+### ✅ **Por Qué AutoArchZeusPy**
 
-2. **Fallback de seguridad**:
-   - Si no puede detectar → asume BIOS
-   - Si hay inconsistencia → pregunta al usuario
+- 🚀 **Más Rápido**: Instalación base en 5-10 minutos
+- 🧠 **Más Inteligente**: Detecta automáticamente UEFI/BIOS y red
+- 🛡️ **Más Seguro**: Validaciones robustas y logging detallado
+- 📶 **Más Conveniente**: Reutiliza credenciales WiFi del modo live
+- 🎨 **Más Completo**: Entorno gráfico listo con un comando
 
-3. **Logs generados**:
-   - `/tmp/zeuspyec_installer.log` - Log general
-   - `/tmp/zeuspyec_installer_error.log` - Errores
-   - `/tmp/zeuspyec_installer_debug.log` - Debug detallado
+### 📈 **Comparación con Instalación Manual**
 
-4. **Recuperación ante errores**:
-   - Función `repair_mount_points()` si falla el montaje
-   - Retry automático en comandos críticos
-   - Validación antes de continuar
+| Tarea | Manual | AutoArchZeusPy |
+|-------|--------|----------------|
+| Particionado | 15+ comandos complejos | Automático según modo |
+| Detección UEFI/BIOS | Verificación manual | 6 métodos automáticos |
+| Configuración Red | Repetir setup cada vez | Reutiliza del modo live |
+| Instalación GRUB | Múltiples pasos según modo | Un comando automático |
+| Post-instalación | Todo manual | Scripts inteligentes |
+| Configuración WiFi | nmcli/iwctl manual | Detección automática |
 
-Este flujo garantiza que:
-- **UEFI siempre use GPT + partición EFI**
-- **BIOS siempre use MBR + partición BOOT**
-- **No hay configuraciones mixtas o incorrectas**
+---
 
-## License
-This project is distributed under the MIT License. Check the `LICENSE` file for more information.
+## 🔄 Casos de Uso
+
+### 🏠 **Uso Personal**
+```bash
+# Usuario quiere instalar Arch rápidamente
+./run.sh
+# → Sistema base + post-install listo en 30 minutos
+```
+
+### 🎓 **Uso Educativo**
+```bash
+# Estudiante necesita entorno de desarrollo
+./zeuspyec-post-install.sh
+# → Python, git, vim, htop instalados automáticamente
+```
+
+### 🖥️ **Servidor/VirtualBox**
+```bash
+# Ethernet detectado automáticamente
+# → Sin configuración WiFi manual
+# → Instalación completamente automática
+```
+
+---
+
+## 🤝 Contribución
+
+¿Encontraste un bug o tienes una mejora? ¡Contribuye!
+
+```bash
+# 🍴 Fork del repositorio
+git clone https://github.com/zeuspyEC/AutoArchZeusPy.git
+
+# 🔧 Crea tu branch
+git checkout -b feature/mejora-increible
+
+# 💾 Commit
+git commit -m "Add: funcionalidad increíble"
+
+# 📤 Push
+git push origin feature/mejora-increible
+
+# 🎯 Pull Request
+```
+
+### 📧 **Contacto**
+- 🐛 **Issues**: [GitHub Issues](https://github.com/zeuspyEC/AutoArchZeusPy/issues)
+- 💬 **Discusiones**: [GitHub Discussions](https://github.com/zeuspyEC/AutoArchZeusPy/discussions)
+
+---
+
+## 📄 Licencia
+
+Este proyecto está bajo la Licencia MIT. Consulta el archivo `LICENSE` para más detalles.
+
+---
+
+## ⭐ ¡Dale una estrella!
+
+Si AutoArchZeusPy simplificó tu instalación de Arch Linux, ¡no olvides darle una ⭐ al repositorio!
+
+---
+
+> **💡 Tip Pro**: Si ya tienes WiFi funcionando en el modo live, el script detectará automáticamente las credenciales. No necesitas configurar nada manualmente.
+
+---
+
+**Desarrollado con ❤️ para la comunidad de Arch Linux**

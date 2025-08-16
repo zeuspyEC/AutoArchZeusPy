@@ -1584,6 +1584,98 @@ install_essential_packages() {
         echo -e "${YELLOW}⚠ No hay credenciales guardadas, intentando detectar...${RESET}"
         detect_current_wifi_connection
     fi
+    
+    # PRIMERO: Configurar mirrors si no se ha hecho
+    if [[ ! -f /etc/pacman.d/mirrorlist.backup ]]; then
+        configure_mirrorlist
+    fi
+    
+    # Verificar y asegurar conexión de red
+    echo -e "${CYAN}Verificando conexión de red...${RESET}"
+    local max_retries=5
+    local retry_count=0
+    
+    while ((retry_count < max_retries)); do
+        if ping -c 2 -W 5 archlinux.org &>/dev/null; then
+            echo -e "${GREEN}✓ Conexión verificada${RESET}"
+            break
+        else
+            ((retry_count++))
+            echo -e "${YELLOW}⚠ Sin conexión, intento $retry_count de $max_retries${RESET}"
+            
+            if ((retry_count < max_retries)); then
+                echo -e "${CYAN}Reintentando configuración de red...${RESET}"
+                
+                # Intentar reconectar con credenciales guardadas
+                if [[ -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
+                    source /tmp/zeuspyec_install/network_credentials.txt
+                    
+                    if [[ "$CONNECTION_TYPE" == "wifi" ]] && [[ -n "$WIFI_SSID" ]] && [[ -n "$WIFI_PASSWORD" ]]; then
+                        echo -e "${CYAN}Reconectando a WiFi: $WIFI_SSID${RESET}"
+                        
+                        # Método 1: iwctl
+                        if command -v iwctl &>/dev/null; then
+                            iwctl station wlan0 disconnect 2>/dev/null
+                            sleep 2
+                            iwctl station wlan0 connect "$WIFI_SSID" --passphrase "$WIFI_PASSWORD" 2>/dev/null
+                            sleep 5
+                        fi
+                        
+                        # Método 2: NetworkManager
+                        if ! ping -c 1 archlinux.org &>/dev/null && command -v nmcli &>/dev/null; then
+                            systemctl restart NetworkManager 2>/dev/null
+                            sleep 3
+                            nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD" 2>/dev/null
+                            sleep 5
+                        fi
+                    fi
+                else
+                    # Si no hay credenciales, intentar dhcpcd
+                    dhcpcd 2>/dev/null &
+                    sleep 5
+                fi
+            else
+                log "ERROR" "Sin conexión a Internet después de $max_retries intentos"
+                echo -e "${RED}✘ Configure manualmente la conexión de red${RESET}"
+                return 1
+            fi
+        fi
+    done
+    
+    # Actualizar base de datos de pacman con reintentos
+    echo -e "${CYAN}Actualizando base de datos de pacman...${RESET}"
+    local pacman_retry=0
+    while ((pacman_retry < 3)); do
+        if pacman -Sy --noconfirm; then
+            break
+        else
+            ((pacman_retry++))
+            echo -e "${YELLOW}Reintentando actualización de pacman ($pacman_retry/3)...${RESET}"
+            sleep 3
+        fi
+    done
+    
+    # AQUÍ FALTABA EL CÓDIGO DE INSTALACIÓN - ESTE ES EL FIX:
+    echo -e "${CYAN}Instalando sistema base con pacstrap...${RESET}"
+    
+    # Instalar paquetes esenciales
+    if pacstrap /mnt base linux linux-firmware networkmanager grub efibootmgr sudo nano base-devel git; then
+        echo -e "${GREEN}✔ Sistema base instalado correctamente${RESET}"
+        log "SUCCESS" "Paquetes esenciales instalados"
+        return 0
+    else
+        echo -e "${RED}✘ Error al instalar sistema base${RESET}"
+        log "ERROR" "Fallo en pacstrap"
+        return 1
+    fi
+}
+    log "INFO" "Instalando paquetes esenciales"
+    
+    # VERIFICAR CREDENCIALES PRIMERO
+    if [[ ! -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
+        echo -e "${YELLOW}⚠ No hay credenciales guardadas, intentando detectar...${RESET}"
+        detect_current_wifi_connection
+    fi
     # PRIMERO: Configurar mirrors si no se ha hecho
     if [[ ! -f /etc/pacman.d/mirrorlist.backup ]]; then
         configure_mirrorlist

@@ -279,103 +279,67 @@ detect_boot_mode() {
     log "INFO" "Detectando modo de arranque del sistema..."
     
     # Método 1: Verificar directorio EFI vars (más confiable)
-    if [[ -d "/sys/firmware/efi/efivars" ]]; then
+    if [[ -d "/sys/firmware/efi/efivars" ]] && ls /sys/firmware/efi/efivars/ &>/dev/null | grep -q .; then
         detection_methods+=("efivars:UEFI")
         boot_detected="UEFI"
-        log "DEBUG" "Método efivars: UEFI detectado"
+        log "DEBUG" "Método efivars: UEFI detectado con variables EFI presentes"
     else
         detection_methods+=("efivars:BIOS")
-        log "DEBUG" "Método efivars: BIOS detectado"
+        if [[ -z "$boot_detected" ]]; then
+            boot_detected="BIOS"
+        fi
+        log "DEBUG" "Método efivars: BIOS detectado o sin variables EFI"
     fi
     
     # Método 2: Verificar con efibootmgr
     if command -v efibootmgr &>/dev/null; then
-        if efibootmgr &>/dev/null; then
+        if efibootmgr &>/dev/null 2>&1; then
             detection_methods+=("efibootmgr:UEFI")
-            if [[ -z "$boot_detected" ]]; then
+            if [[ -z "$boot_detected" ]] || [[ "$boot_detected" == "BIOS" ]]; then
                 boot_detected="UEFI"
             fi
-            log "DEBUG" "Método efibootmgr: UEFI detectado"
+            log "DEBUG" "Método efibootmgr: UEFI confirmado"
         else
             detection_methods+=("efibootmgr:BIOS")
-            if [[ -z "$boot_detected" ]]; then
-                boot_detected="BIOS"
-            fi
             log "DEBUG" "Método efibootmgr: BIOS detectado"
         fi
     fi
     
-    # Método 3: Verificar con dmesg
-    if dmesg | grep -q "EFI v"; then
-        detection_methods+=("dmesg:UEFI")
-        if [[ -z "$boot_detected" ]]; then
-            boot_detected="UEFI"
+    # Método 3: Verificar la tabla de particiones actual del sistema
+    local root_disk=""
+    if mountpoint -q / ; then
+        root_disk=$(df / | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//' | sed 's/p$//')
+        if [[ -b "$root_disk" ]]; then
+            local partition_table
+            partition_table=$(parted -s "$root_disk" print 2>/dev/null | grep "Partition Table" | awk '{print $3}')
+            if [[ "$partition_table" == "gpt" ]]; then
+                detection_methods+=("current_disk:GPT")
+                log "DEBUG" "Disco actual usa GPT (típico de UEFI)"
+            elif [[ "$partition_table" == "msdos" ]] || [[ "$partition_table" == "dos" ]]; then
+                detection_methods+=("current_disk:MBR")
+                log "DEBUG" "Disco actual usa MBR (típico de BIOS)"
+            fi
         fi
-        log "DEBUG" "Método dmesg: UEFI detectado"
-    elif dmesg | grep -q "BIOS"; then
-        detection_methods+=("dmesg:BIOS")
-        if [[ -z "$boot_detected" ]]; then
-            boot_detected="BIOS"
-        fi
-        log "DEBUG" "Método dmesg: BIOS detectado"
     fi
     
-    # Método 4: Verificar con dmidecode (requiere root)
-    if [[ $EUID -eq 0 ]] && command -v dmidecode &>/dev/null; then
-        local bios_info
-        bios_info=$(dmidecode -t bios 2>/dev/null | grep -i "UEFI")
-        if [[ -n "$bios_info" ]]; then
-            detection_methods+=("dmidecode:UEFI")
-            if [[ -z "$boot_detected" ]]; then
-                boot_detected="UEFI"
-            fi
-            log "DEBUG" "Método dmidecode: UEFI detectado"
+    # Determinar el modo final con validación estricta
+    if [[ "$boot_detected" == "UEFI" ]]; then
+        # Validación adicional para UEFI
+        if [[ -d "/sys/firmware/efi/efivars" ]] && ls /sys/firmware/efi/efivars/ 2>/dev/null | grep -q .; then
+            BOOT_MODE="UEFI"
+            log "SUCCESS" "Modo de arranque confirmado: UEFI"
         else
-            detection_methods+=("dmidecode:BIOS")
-            if [[ -z "$boot_detected" ]]; then
-                boot_detected="BIOS"
-            fi
-            log "DEBUG" "Método dmidecode: BIOS detectado"
+            # Si detectamos UEFI pero no hay efivars, es probablemente BIOS
+            BOOT_MODE="BIOS"
+            log "WARN" "Detección inconsistente, asumiendo BIOS por seguridad"
         fi
-    fi
-    
-    # Método 5: Verificar tabla de particiones del disco actual
-    if command -v parted &>/dev/null && [[ -n "${TARGET_DISK:-}" ]]; then
-        local partition_table
-        partition_table=$(parted -s "$TARGET_DISK" print 2>/dev/null | grep "Partition Table" | awk '{print $3}')
-        if [[ "$partition_table" == "gpt" ]]; then
-            detection_methods+=("partition:GPT->UEFI")
-            log "DEBUG" "Tabla de particiones GPT detectada (típico de UEFI)"
-        elif [[ "$partition_table" == "msdos" ]]; then
-            detection_methods+=("partition:MBR->BIOS")
-            log "DEBUG" "Tabla de particiones MBR detectada (típico de BIOS)"
-        fi
-    fi
-    
-    # Método 6: Verificar si existe partición EFI montada
-    if mount | grep -q "/boot/efi\|/efi"; then
-        detection_methods+=("mount:UEFI")
-        if [[ -z "$boot_detected" ]]; then
-            boot_detected="UEFI"
-        fi
-        log "DEBUG" "Partición EFI montada detectada"
-    fi
-    
-    # Determinar el modo final
-    if [[ -z "$boot_detected" ]]; then
-        # Si no se pudo detectar, asumir BIOS por seguridad
-        BOOT_MODE="BIOS"
-        log "WARN" "No se pudo determinar el modo de arranque con certeza, asumiendo BIOS"
     else
-        BOOT_MODE="$boot_detected"
-        log "SUCCESS" "Modo de arranque detectado: $BOOT_MODE"
+        BOOT_MODE="BIOS"
+        log "SUCCESS" "Modo de arranque confirmado: BIOS Legacy"
     fi
     
     # Registrar todos los métodos de detección usados
     log "DEBUG" "Métodos de detección utilizados: ${detection_methods[*]}"
-    
-    # Validar que el modo detectado sea consistente con el sistema
-    validate_boot_mode_detection
     
     return 0
 }
@@ -753,251 +717,157 @@ setup_network_connection() {
 detect_current_wifi_connection() {
     log "INFO" "Detectando conexión WiFi activa"
     
-    # Variables para guardar información
     local current_ssid=""
     local current_interface=""
     local wifi_password=""
     
     echo -e "${CYAN}Buscando conexión WiFi activa...${RESET}"
     
-    # MÉTODO 1: Detectar con iwctl (más confiable en LiveCD)
+    # Método 1: Detectar con iwctl
     if command -v iwctl &>/dev/null; then
         echo -e "${CYAN}Detectando con iwctl...${RESET}"
         
-        # Obtener todas las interfaces wireless
+        # Obtener interfaces wireless
         local wireless_interfaces
-        wireless_interfaces=($(iwctl device list 2>/dev/null | grep -E "wlan[0-9]+|wlp[0-9]s[0-9]+" -o))
+        wireless_interfaces=($(iwctl device list 2>/dev/null | grep -E "wlan[0-9]+|wlp[0-9]+s[0-9]+" -o | sort -u))
         
         for interface in "${wireless_interfaces[@]}"; do
-            # Verificar estado de la interfaz
             local station_info
             station_info=$(iwctl station "$interface" show 2>/dev/null)
             
             if echo "$station_info" | grep -q "State.*connected"; then
-                # CORREGIDO: Capturar SSID completo SIN quitar espacios internos
-                current_ssid=$(echo "$station_info" | grep "Connected network" | sed 's/.*Connected network[[:space:]]*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                # Extraer SSID correctamente, preservando espacios
+                current_ssid=$(echo "$station_info" | grep "Connected network" | sed -E 's/.*Connected network[[:space:]]+//')
+                current_ssid=$(echo "$current_ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 current_interface="$interface"
                 
-                # VALIDAR que el SSID no esté vacío
-                if [ -n "$current_ssid" ] && [ "$current_ssid" != "--" ]; then
-                    echo -e "${GREEN}✅ WiFi detectado via iwctl:${RESET}"
+                if [[ -n "$current_ssid" ]] && [[ "$current_ssid" != "--" ]]; then
+                    echo -e "${GREEN}✅ WiFi detectado:${RESET}"
                     echo -e "  Interface: ${CYAN}$current_interface${RESET}"
                     echo -e "  SSID: ${CYAN}\"$current_ssid\"${RESET}"
                     
-                    # VERIFICAR CONEXIÓN ACTUAL
-                    echo -ne "${CYAN}Verificando conexión actual... ${RESET}"
+                    # Verificar conexión
                     if ping -c 2 -W 3 archlinux.org &>/dev/null; then
-                        echo -e "${GREEN}✔ Conectado${RESET}"
+                        echo -e "${GREEN}✔ Conectado a Internet${RESET}"
                     else
                         echo -e "${YELLOW}⚠ Sin conexión a Internet${RESET}"
                     fi
                     
-                    # Solicitar contraseña al usuario
-                    echo -e "\n${YELLOW}⚠ Necesitamos la contraseña para reconexión automática${RESET}"
-                    echo -e "${WHITE}SSID detectado: ${CYAN}\"$current_ssid\"${RESET}"
-                    
-                    # Loop hasta obtener contraseña válida
+                    # Solicitar contraseña
+                    echo -e "\n${YELLOW}Se necesita la contraseña para reconexión automática${RESET}"
                     local attempts=0
                     local max_attempts=3
                     
-                    while [ -z "$wifi_password" ] && [ $attempts -lt $max_attempts ]; do
-                        echo -ne "${YELLOW}Ingrese la contraseña WiFi:${RESET} "
+                    while [[ -z "$wifi_password" ]] && [[ $attempts -lt $max_attempts ]]; do
+                        echo -ne "${YELLOW}Contraseña WiFi para \"$current_ssid\":${RESET} "
                         read -rs wifi_password
                         echo
                         
-                        if [ -z "$wifi_password" ]; then
+                        if [[ -z "$wifi_password" ]]; then
                             echo -e "${RED}✘ La contraseña no puede estar vacía${RESET}"
                             ((attempts++))
                         else
-                            # MOSTRAR CONTRASEÑA PARA CONFIRMAR (primeros y últimos caracteres)
+                            # Confirmar contraseña
+                            local pwd_length=${#wifi_password}
                             local masked_pwd
-                            if [ ${#wifi_password} -gt 4 ]; then
-                                masked_pwd="${wifi_password:0:2}${'*' repeated $((${#wifi_password}-4))}${wifi_password: -2}"
+                            if [[ $pwd_length -gt 4 ]]; then
+                                masked_pwd="${wifi_password:0:2}$(printf '*%.0s' $(seq 1 $((pwd_length-4))))${wifi_password: -2}"
                             else
                                 masked_pwd="****"
                             fi
+                            
                             echo -e "${WHITE}Contraseña ingresada: ${CYAN}[$masked_pwd]${RESET}"
                             echo -ne "${YELLOW}¿Es correcta? [S/n]:${RESET} "
                             read -r confirm
                             
                             if [[ "$confirm" =~ ^[Nn]$ ]]; then
                                 wifi_password=""
-                                echo -e "${YELLOW}Intente nuevamente...${RESET}"
                             else
-                                echo -e "${GREEN}✔ Contraseña confirmada${RESET}"
-                                break
+                                # Probar conexión
+                                echo -e "\n${CYAN}Probando conexión...${RESET}"
+                                iwctl station "$interface" disconnect &>/dev/null
+                                sleep 2
+                                
+                                # Crear archivo temporal para passphrase
+                                local temp_pass="/tmp/wifi_pass_$$"
+                                echo "$wifi_password" > "$temp_pass"
+                                chmod 600 "$temp_pass"
+                                
+                                if iwctl --passphrase-file "$temp_pass" station "$interface" connect "$current_ssid" &>/dev/null; then
+                                    rm -f "$temp_pass"
+                                    sleep 5
+                                    
+                                    if ping -c 3 archlinux.org &>/dev/null; then
+                                        echo -e "${GREEN}✔ Conexión exitosa${RESET}"
+                                        save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
+                                        return 0
+                                    fi
+                                fi
+                                rm -f "$temp_pass"
+                                echo -e "${RED}✘ Contraseña incorrecta${RESET}"
+                                wifi_password=""
                             fi
                         fi
                     done
-                    
-                    if [ -z "$wifi_password" ]; then
-                        echo -e "${RED}✘ No se pudo obtener la contraseña después de $max_attempts intentos${RESET}"
-                        return 1
-                    fi
-                    
-                    # TEST DE CONEXIÓN CON LA CONTRASEÑA
-                    echo -e "\n${CYAN}Probando reconexión con las credenciales...${RESET}"
-                    iwctl station "$interface" disconnect 2>/dev/null
-                    sleep 3
-                    
-                    echo -ne "${CYAN}Conectando a \"$current_ssid\"... ${RESET}"
-                    
-                    # CORREGIDO: Usar comillas dobles para SSID con espacios
-                    if iwctl --passphrase "$wifi_password" station "$interface" connect "$current_ssid" 2>/dev/null; then
-                        sleep 5
-                        
-                        # VERIFICAR CON PING
-                        if ping -c 3 -W 5 archlinux.org &>/dev/null; then
-                            echo -e "${GREEN}✔ Conexión exitosa${RESET}"
-                            
-                            # Guardar credenciales SOLO si funciona
-                            save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
-                            return 0
-                        else
-                            echo -e "${RED}✘ Conectado pero sin Internet${RESET}"
-                            echo -e "${YELLOW}Verificando configuración de red...${RESET}"
-                            
-                            # Mostrar información de debug
-                            echo -e "${CYAN}Información de depuración:${RESET}"
-                            ip addr show "$interface" 2>/dev/null | grep -E "inet |state" | sed 's/^/  /'
-                            ip route | grep default | sed 's/^/  /'
-                        fi
-                    else
-                        echo -e "${RED}✘ No se pudo conectar${RESET}"
-                        echo -e "${YELLOW}La contraseña podría ser incorrecta${RESET}"
-                    fi
-                    
-                    # Preguntar si quiere reintentar
-                    echo -ne "${YELLOW}¿Desea intentar con otra contraseña? [S/n]:${RESET} "
-                    read -r retry
-                    if [[ ! "$retry" =~ ^[Nn]$ ]]; then
-                        wifi_password=""
-                        # Recursión para reintentar
-                        detect_current_wifi_connection
-                        return $?
-                    fi
                 fi
             fi
         done
     fi
     
-    # MÉTODO 2: NetworkManager (si está disponible)
-    if command -v nmcli &>/dev/null; then
+    # Método 2: NetworkManager
+    if command -v nmcli &>/dev/null && systemctl is-active NetworkManager &>/dev/null; then
         echo -e "${CYAN}Detectando con NetworkManager...${RESET}"
         
-        # Verificar si NetworkManager está activo
-        if systemctl is-active NetworkManager &>/dev/null; then
-            # Obtener SSID activo - PRESERVAR ESPACIOS
-            current_ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes:' | cut -d: -f2-)
+        # Obtener conexión activa
+        local active_conn
+        active_conn=$(nmcli -t -f NAME,TYPE,DEVICE connection show --active | grep ":802-11-wireless:" | head -1)
+        
+        if [[ -n "$active_conn" ]]; then
+            current_ssid=$(echo "$active_conn" | cut -d: -f1)
+            current_interface=$(echo "$active_conn" | cut -d: -f3)
             
-            if [ -n "$current_ssid" ] && [ "$current_ssid" != "--" ]; then
-                echo -e "${GREEN}✅ WiFi detectado via NetworkManager:${RESET}"
-                echo -e "  SSID: ${CYAN}\"$current_ssid\"${RESET}"
-                
-                # Obtener interfaz
-                current_interface=$(nmcli -t -f device,state dev | grep ':connected' | head -1 | cut -d':' -f1)
-                
-                # Intentar obtener contraseña de NetworkManager
-                wifi_password=$(nmcli --show-secrets -f 802-11-wireless-security.psk connection show "$current_ssid" 2>/dev/null | grep "psk:" | cut -d: -f2- | sed 's/^[[:space:]]*//')
-                
-                # Si no se pudo obtener, pedirla al usuario
-                if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
-                    echo -e "\n${YELLOW}⚠ No se pudo obtener la contraseña automáticamente${RESET}"
-                    
-                    while [ -z "$wifi_password" ]; do
-                        echo -ne "${YELLOW}Ingrese la contraseña de \"$current_ssid\":${RESET} "
-                        read -rs wifi_password
-                        echo
-                        
-                        if [ -n "$wifi_password" ]; then
-                            # MOSTRAR Y CONFIRMAR
-                            local masked_pwd
-                            if [ ${#wifi_password} -gt 4 ]; then
-                                masked_pwd="${wifi_password:0:2}****${wifi_password: -2}"
-                            else
-                                masked_pwd="****"
-                            fi
-                            echo -e "${WHITE}Contraseña ingresada: ${CYAN}[$masked_pwd]${RESET}"
-                            echo -ne "${YELLOW}¿Es correcta? [S/n]:${RESET} "
-                            read -r confirm
-                            
-                            if [[ "$confirm" =~ ^[Nn]$ ]]; then
-                                wifi_password=""
-                            fi
-                        fi
-                    done
-                else
-                    echo -e "${GREEN}✅ Contraseña obtenida de NetworkManager${RESET}"
-                fi
-                
-                # VERIFICAR CONEXIÓN
-                echo -ne "${CYAN}Verificando conexión a Internet... ${RESET}"
-                if ping -c 3 -W 5 archlinux.org &>/dev/null; then
-                    echo -e "${GREEN}✔ OK${RESET}"
-                    save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
-                    return 0
-                else
-                    echo -e "${RED}✘ Sin conexión${RESET}"
-                fi
+            echo -e "${GREEN}✅ WiFi detectado:${RESET}"
+            echo -e "  SSID: ${CYAN}\"$current_ssid\"${RESET}"
+            echo -e "  Interface: ${CYAN}$current_interface${RESET}"
+            
+            # Intentar obtener contraseña guardada
+            wifi_password=$(nmcli --show-secrets -g 802-11-wireless-security.psk connection show "$current_ssid" 2>/dev/null)
+            
+            if [[ -z "$wifi_password" ]] || [[ "$wifi_password" == "--" ]]; then
+                # Solicitar contraseña
+                echo -ne "${YELLOW}Contraseña WiFi para \"$current_ssid\":${RESET} "
+                read -rs wifi_password
+                echo
+            fi
+            
+            if [[ -n "$wifi_password" ]]; then
+                save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
+                return 0
             fi
         fi
     fi
     
-    # MÉTODO 3: Configuración manual si hay conexión pero no se detectan detalles
+    # Si hay conexión pero no se detectaron detalles
     if ping -c 1 archlinux.org &>/dev/null 2>&1; then
-        echo -e "${GREEN}✅ Hay conexión a Internet activa${RESET}"
-        echo -e "${YELLOW}Pero no se pudieron detectar los detalles de la red WiFi${RESET}"
+        echo -e "${GREEN}✅ Hay conexión a Internet${RESET}"
+        echo -e "${YELLOW}Ingrese los datos de la red WiFi actual:${RESET}"
         
-        # Pedir información manualmente
-        echo -e "\n${CYAN}Por favor, ingrese los datos de su conexión WiFi actual:${RESET}"
-        
-        # SSID - PERMITIR ESPACIOS
-        while [ -z "$current_ssid" ]; do
-            echo -ne "${YELLOW}SSID (nombre completo de la red WiFi, incluyendo espacios):${RESET} "
+        # Solicitar SSID
+        while [[ -z "$current_ssid" ]]; do
+            echo -ne "${YELLOW}SSID de la red WiFi:${RESET} "
             read -r current_ssid
-            # Solo quitar espacios al inicio y final, NO los internos
             current_ssid=$(echo "$current_ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            
-            if [ -n "$current_ssid" ]; then
-                echo -e "${WHITE}SSID ingresado: ${CYAN}\"$current_ssid\"${RESET}"
-                echo -ne "${YELLOW}¿Es correcto? [S/n]:${RESET} "
-                read -r confirm_ssid
-                if [[ "$confirm_ssid" =~ ^[Nn]$ ]]; then
-                    current_ssid=""
-                fi
-            fi
         done
         
-        # CONTRASEÑA
-        while [ -z "$wifi_password" ]; do
-            echo -ne "${YELLOW}Contraseña:${RESET} "
-            read -rs wifi_password
-            echo
-            
-            if [ -n "$wifi_password" ]; then
-                local masked_pwd
-                if [ ${#wifi_password} -gt 4 ]; then
-                    masked_pwd="${wifi_password:0:2}****${wifi_password: -2}"
-                else
-                    masked_pwd="****"
-                fi
-                echo -e "${WHITE}Contraseña ingresada: ${CYAN}[$masked_pwd]${RESET}"
-                echo -ne "${YELLOW}¿Es correcta? [S/n]:${RESET} "
-                read -r confirm
-                
-                if [[ "$confirm" =~ ^[Nn]$ ]]; then
-                    wifi_password=""
-                fi
-            fi
-        done
+        # Solicitar contraseña
+        echo -ne "${YELLOW}Contraseña:${RESET} "
+        read -rs wifi_password
+        echo
         
-        # Detectar interfaz wireless
-        current_interface=$(ip link show | grep -E "wlan[0-9]+|wlp[0-9]s[0-9]+" -o | head -1)
-        if [ -z "$current_interface" ]; then
-            current_interface="wlan0"  # Default
-        fi
+        # Detectar interfaz
+        current_interface=$(ip link show | grep -E "wlan[0-9]+|wlp[0-9]+s[0-9]+" -o | head -1)
+        [[ -z "$current_interface" ]] && current_interface="wlan0"
         
-        # Guardar credenciales
         save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
         return 0
     fi
@@ -1015,38 +885,45 @@ save_network_credentials() {
     
     mkdir -p /tmp/zeuspyec_install
     
-    # DEBUG - Mostrar exactamente qué se está guardando
     echo -e "\n${CYAN}=== GUARDANDO CREDENCIALES ===${RESET}"
     echo -e "${WHITE}Tipo: ${CYAN}$conn_type${RESET}"
     echo -e "${WHITE}SSID: ${CYAN}\"$ssid\"${RESET}"
     echo -e "${WHITE}Interface: ${CYAN}$interface${RESET}"
     
-    # CORREGIDO: Guardar con escape adecuado para espacios
+    # Crear archivo de credenciales con escape apropiado
     cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
 # Configuración de Red ZeuspyEC
 # Generado: $(date)
-# IMPORTANTE: No editar manualmente este archivo
+# NO EDITAR MANUALMENTE
 
 CONNECTION_TYPE="$conn_type"
-WIFI_SSID="$ssid"
-WIFI_PASSWORD="$password"
+WIFI_SSID="$(echo "$ssid" | sed 's/"/\\"/g')"
+WIFI_PASSWORD="$(echo "$password" | sed 's/"/\\"/g')"
 WIFI_INTERFACE="$interface"
 INSTALL_DATE="$(date '+%Y-%m-%d %H:%M:%S')"
 EOF
     
-    if [ -f /tmp/zeuspyec_install/network_credentials.txt ]; then
+    # Establecer permisos seguros
+    chmod 600 /tmp/zeuspyec_install/network_credentials.txt
+    
+    if [[ -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
         echo -e "${GREEN}✅ Credenciales guardadas exitosamente${RESET}"
         
-        # VERIFICAR QUE SE GUARDÓ CORRECTAMENTE (sin mostrar contraseña)
-        echo -e "\n${CYAN}Verificando archivo guardado:${RESET}"
-        echo -e "  SSID: \"$(grep 'WIFI_SSID=' /tmp/zeuspyec_install/network_credentials.txt | cut -d'"' -f2)\""
-        echo -e "  Interface: $(grep 'WIFI_INTERFACE=' /tmp/zeuspyec_install/network_credentials.txt | cut -d'"' -f2)"
+        # Verificar guardado (sin mostrar contraseña)
+        echo -e "\n${CYAN}Verificando archivo:${RESET}"
+        local saved_ssid=$(grep 'WIFI_SSID=' /tmp/zeuspyec_install/network_credentials.txt | cut -d'"' -f2)
+        local saved_interface=$(grep 'WIFI_INTERFACE=' /tmp/zeuspyec_install/network_credentials.txt | cut -d'"' -f2)
+        echo -e "  SSID guardado: \"$saved_ssid\""
+        echo -e "  Interface: $saved_interface"
         
-        log "SUCCESS" "Credenciales WiFi guardadas correctamente"
+        log "SUCCESS" "Credenciales de red guardadas correctamente"
     else
         log "ERROR" "No se pudieron guardar las credenciales"
         echo -e "${RED}✘ Error al guardar credenciales${RESET}"
+        return 1
     fi
+    
+    return 0
 }
 
 setup_wifi_connection() {
@@ -1265,12 +1142,15 @@ repair_mount_points() {
 prepare_disk() {
     log "INFO" "Iniciando preparación del disco"
     
+    # Verificar modo de arranque primero
+    detect_boot_mode
+    
     # Verificar si hay sistemas operativos instalados
     detect_existing_os
     
     # Listar discos disponibles
     local available_disks
-    mapfile -t available_disks < <(lsblk -dpno NAME,SIZE,MODEL | grep -E "^/dev/(sd|nvme|vd)")
+    mapfile -t available_disks < <(lsblk -dpno NAME,SIZE,MODEL | grep -E "^/dev/(sd|nvme|vd)" | grep -v "loop")
     
     if [[ ${#available_disks[@]} -eq 0 ]]; then
         log "ERROR" "No se encontraron discos disponibles"
@@ -1284,7 +1164,14 @@ prepare_disk() {
     # Mostrar discos con información detallada
     local i=1
     for disk in "${available_disks[@]}"; do
-        echo -e "${CYAN}$i)${RESET} $disk"
+        local disk_name=$(echo "$disk" | awk '{print $1}')
+        local disk_info="$disk"
+        
+        # Agregar información de tabla de particiones
+        local partition_table=$(parted -s "$disk_name" print 2>/dev/null | grep "Partition Table" | awk '{print $3}')
+        [[ -n "$partition_table" ]] && disk_info="$disk_info (Tabla: $partition_table)"
+        
+        echo -e "${CYAN}$i)${RESET} $disk_info"
         ((i++))
     done
     
@@ -1294,54 +1181,64 @@ prepare_disk() {
         read -r disk_number
         
         if [[ $disk_number =~ ^[0-9]+$ ]] && ((disk_number > 0 && disk_number <= ${#available_disks[@]})); then
-            TARGET_DISK=$(echo "${available_disks[$((disk_number-1))]}" | cut -d' ' -f1)
+            TARGET_DISK=$(echo "${available_disks[$((disk_number-1))]}" | awk '{print $1}')
             break
         fi
         echo -e "${RED}Selección inválida${RESET}"
     done
     
+    log "INFO" "Disco seleccionado: $TARGET_DISK"
+    
     # Verificar si el disco está en uso
     if is_disk_mounted "$TARGET_DISK"; then
         log "WARN" "El disco $TARGET_DISK tiene particiones montadas"
-        echo -e "${YELLOW}¿Desea intentar desmontar las particiones? [S/n]:${RESET} "
+        echo -e "${YELLOW}¿Desea desmontar las particiones? [S/n]:${RESET} "
         read -r response
         if [[ ! "$response" =~ ^[Nn]$ ]]; then
-            unmount_all "$TARGET_DISK"
+            unmount_all "$TARGET_DISK" || return 1
         else
             return 1
         fi
     fi
     
-    # Seleccionar esquema de particionamiento según el modo de arranque
-    # UEFI siempre usa GPT, BIOS siempre usa MBR
-    local partition_scheme
+    # Mostrar información del modo de arranque y esquema a usar
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║     Configuración de Particionado      ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        partition_scheme="gpt"
-        echo -e "\n${CYAN}Modo UEFI detectado - usando esquema GPT${RESET}"
+        echo -e "${INFO}Modo de arranque: ${CYAN}UEFI${RESET}"
+        echo -e "${INFO}Esquema de particiones: ${CYAN}GPT${RESET}"
+        echo -e "${INFO}Particiones a crear:${RESET}"
+        echo -e "  • ${WHITE}EFI${RESET} - 512MB (FAT32)"
+        echo -e "  • ${WHITE}ROOT${RESET} - Resto del disco menos swap (EXT4)"
+        echo -e "  • ${WHITE}SWAP${RESET} - Tamaño de RAM o máximo 8GB"
     else
-        partition_scheme="mbr"
-        echo -e "\n${CYAN}Modo BIOS Legacy detectado - usando esquema MBR${RESET}"
+        echo -e "${INFO}Modo de arranque: ${CYAN}BIOS Legacy${RESET}"
+        echo -e "${INFO}Esquema de particiones: ${CYAN}MBR${RESET}"
+        echo -e "${INFO}Particiones a crear:${RESET}"
+        echo -e "  • ${WHITE}BOOT${RESET} - 512MB (EXT4)"
+        echo -e "  • ${WHITE}ROOT${RESET} - Resto del disco menos swap (EXT4)"
+        echo -e "  • ${WHITE}SWAP${RESET} - Tamaño de RAM o máximo 8GB"
     fi
     
     # Mostrar advertencia
     show_warning_message || return 1
     
-    # Crear esquema de partición
-    if [[ "$partition_scheme" == "gpt" ]]; then
-        create_gpt_partitions
+    # Crear particiones según el modo de arranque
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        create_gpt_partitions || return 1
     else
-        create_mbr_partitions
+        create_mbr_partitions || return 1
     fi
     
-    # Verificar particiones y puntos de montaje
+    # Verificar particiones
     if ! verify_partitions; then
-        log "WARN" "Problemas con los puntos de montaje, intentando reparar..."
-        if ! repair_mount_points "$root_part" "$boot_part"; then
-            log "ERROR" "No se pudieron reparar los puntos de montaje"
-            return 1
-        fi
+        log "ERROR" "Verificación de particiones falló"
+        return 1
     fi
     
+    log "SUCCESS" "Disco preparado correctamente"
     return 0
 }
 
@@ -1358,139 +1255,315 @@ show_warning_message() {
 
 # Función para crear particiones GPT
 create_gpt_partitions() {
-    log "INFO" "Creando particiones GPT"
+    log "INFO" "Creando particiones GPT para sistema UEFI"
+    
+    # Detectar si es disco NVMe o SATA/SSD tradicional
+    local partition_prefix=""
+    if [[ "$TARGET_DISK" =~ ^/dev/nvme[0-9]+n[0-9]+$ ]]; then
+        partition_prefix="${TARGET_DISK}p"
+        log "DEBUG" "Detectado disco NVMe, usando prefijo: ${partition_prefix}"
+    else
+        partition_prefix="${TARGET_DISK}"
+        log "DEBUG" "Detectado disco SATA/SSD, usando prefijo: ${partition_prefix}"
+    fi
     
     # Calcular tamaños
-    local disk_size
-    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+    local disk_size_bytes
+    disk_size_bytes=$(blockdev --getsize64 "$TARGET_DISK")
+    local disk_size=$((disk_size_bytes / 1024 / 1024))  # MB
     local efi_size=512
     local swap_size
-    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-    local root_size=$((disk_size - efi_size - swap_size))
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2 < 4096 ? $2 : ($2 < 8192 ? $2 : 8192))}')
+    local root_size=$((disk_size - efi_size - swap_size - 100))  # 100MB margen de seguridad
+    
+    log "DEBUG" "Tamaños calculados - Disco: ${disk_size}MB, EFI: ${efi_size}MB, Root: ${root_size}MB, Swap: ${swap_size}MB"
+    
+    # Limpiar disco completamente
+    log "INFO" "Limpiando tabla de particiones existente..."
+    dd if=/dev/zero of="$TARGET_DISK" bs=512 count=1 conv=notrunc &>/dev/null
+    sync
+    partprobe "$TARGET_DISK" 2>/dev/null
+    sleep 2
     
     # Crear tabla GPT
-    if ! retry_command parted -s "$TARGET_DISK" mklabel gpt; then
+    echo -e "${CYAN}Creando tabla GPT nueva...${RESET}"
+    if ! parted -s "$TARGET_DISK" mklabel gpt; then
         log "ERROR" "Fallo al crear tabla GPT"
         return 1
     fi
+    sleep 1
     
-    echo -e "\n${CYAN}Creando particiones...${RESET}"
+    # Crear particiones con alineación óptima
+    echo -e "${CYAN}Creando particiones...${RESET}"
     
-    # Crear particiones con retry
-    retry_command parted -s "$TARGET_DISK" \
-        mkpart "EFI" fat32 1MiB "${efi_size}MiB" \
-        set 1 esp on \
-        mkpart "ROOT" ext4 "${efi_size}MiB" "$((efi_size + root_size))MiB" \
-        mkpart "SWAP" linux-swap "$((efi_size + root_size))MiB" 100%
-    
-    sleep 2  # Esperar a que el kernel detecte las nuevas particiones
-    
-    # Formatear particiones
-    local efi_part="${TARGET_DISK}1"
-    local root_part="${TARGET_DISK}2"
-    local swap_part="${TARGET_DISK}3"
-    
-    echo -e "${CYAN}Formateando particiones...${RESET}"
-    
-    # Formatear EFI
-    echo -ne "  EFI (${efi_part})... "
-    if retry_command mkfs.fat -F32 "$efi_part"; then
+    # Partición EFI
+    echo -ne "  • Creando partición EFI... "
+    if parted -s "$TARGET_DISK" mkpart "EFI" fat32 1MiB "${efi_size}MiB" && \
+       parted -s "$TARGET_DISK" set 1 esp on && \
+       parted -s "$TARGET_DISK" set 1 boot on; then
         echo -e "${GREEN}✔${RESET}"
     else
         echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al crear partición EFI"
+        return 1
+    fi
+    
+    # Partición ROOT
+    echo -ne "  • Creando partición ROOT... "
+    local root_end=$((efi_size + root_size))
+    if parted -s "$TARGET_DISK" mkpart "ROOT" ext4 "${efi_size}MiB" "${root_end}MiB"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al crear partición ROOT"
+        return 1
+    fi
+    
+    # Partición SWAP
+    echo -ne "  • Creando partición SWAP... "
+    if parted -s "$TARGET_DISK" mkpart "SWAP" linux-swap "${root_end}MiB" 100%; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al crear partición SWAP"
+        return 1
+    fi
+    
+    # Actualizar kernel con nuevas particiones
+    partprobe "$TARGET_DISK"
+    sleep 3
+    
+    # Definir nombres de particiones
+    local efi_part="${partition_prefix}1"
+    local root_part="${partition_prefix}2"
+    local swap_part="${partition_prefix}3"
+    
+    # Verificar que las particiones existen
+    for part in "$efi_part" "$root_part" "$swap_part"; do
+        if [[ ! -b "$part" ]]; then
+            log "ERROR" "La partición $part no existe"
+            return 1
+        fi
+    done
+    
+    echo -e "\n${CYAN}Formateando particiones...${RESET}"
+    
+    # Formatear EFI
+    echo -ne "  • Formateando EFI (${efi_part})... "
+    if mkfs.fat -F32 -n "EFI" "$efi_part" &>/dev/null; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición EFI"
         return 1
     fi
     
     # Formatear ROOT
-    echo -ne "  ROOT (${root_part})... "
-    if retry_command mkfs.ext4 -F "$root_part"; then
+    echo -ne "  • Formateando ROOT (${root_part})... "
+    if mkfs.ext4 -F -L "ROOT" "$root_part" &>/dev/null; then
         echo -e "${GREEN}✔${RESET}"
     else
         echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición ROOT"
         return 1
     fi
     
     # Formatear SWAP
-    echo -ne "  SWAP (${swap_part})... "
-    if retry_command mkswap "$swap_part" && retry_command swapon "$swap_part"; then
+    echo -ne "  • Formateando SWAP (${swap_part})... "
+    if mkswap -L "SWAP" "$swap_part" &>/dev/null && swapon "$swap_part" &>/dev/null; then
         echo -e "${GREEN}✔${RESET}"
     else
         echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición SWAP"
         return 1
     fi
     
     # Montar particiones
-    mount_partitions "$root_part" "$efi_part" || return 1
+    echo -e "\n${CYAN}Montando particiones...${RESET}"
     
+    # Montar ROOT
+    echo -ne "  • Montando ROOT... "
+    if mount "$root_part" /mnt; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar partición ROOT"
+        return 1
+    fi
+    
+    # Crear y montar EFI
+    echo -ne "  • Montando EFI... "
+    mkdir -p /mnt/boot/efi
+    if mount "$efi_part" /mnt/boot/efi; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar partición EFI"
+        return 1
+    fi
+    
+    # Guardar información de particiones
+    echo "$efi_part" > /tmp/efi_partition
+    echo "$root_part" > /tmp/root_partition
+    echo "$swap_part" > /tmp/swap_partition
+    
+    log "SUCCESS" "Particiones GPT creadas y montadas correctamente"
     return 0
 }
 
 # Función para crear particiones MBR
 create_mbr_partitions() {
-    log "INFO" "Creando particiones MBR"
+    log "INFO" "Creando particiones MBR para sistema BIOS Legacy"
+    
+    # Detectar si es disco NVMe o SATA/SSD tradicional
+    local partition_prefix=""
+    if [[ "$TARGET_DISK" =~ ^/dev/nvme[0-9]+n[0-9]+$ ]]; then
+        partition_prefix="${TARGET_DISK}p"
+        log "DEBUG" "Detectado disco NVMe, usando prefijo: ${partition_prefix}"
+    else
+        partition_prefix="${TARGET_DISK}"
+        log "DEBUG" "Detectado disco SATA/SSD, usando prefijo: ${partition_prefix}"
+    fi
     
     # Calcular tamaños
-    local disk_size
-    disk_size=$(blockdev --getsize64 "$TARGET_DISK" | awk '{print int($1/1024/1024)}')  # MB
+    local disk_size_bytes
+    disk_size_bytes=$(blockdev --getsize64 "$TARGET_DISK")
+    local disk_size=$((disk_size_bytes / 1024 / 1024))  # MB
     local boot_size=512
     local swap_size
-    swap_size=$(free -m | awk '/^Mem:/ {print int($2)}')
-    local root_size=$((disk_size - boot_size - swap_size))
+    swap_size=$(free -m | awk '/^Mem:/ {print int($2 < 4096 ? $2 : ($2 < 8192 ? $2 : 8192))}')
+    local root_size=$((disk_size - boot_size - swap_size - 100))  # 100MB margen
+    
+    log "DEBUG" "Tamaños - Disco: ${disk_size}MB, Boot: ${boot_size}MB, Root: ${root_size}MB, Swap: ${swap_size}MB"
+    
+    # Limpiar disco
+    log "INFO" "Limpiando tabla de particiones existente..."
+    dd if=/dev/zero of="$TARGET_DISK" bs=512 count=1 conv=notrunc &>/dev/null
+    sync
+    partprobe "$TARGET_DISK" 2>/dev/null
+    sleep 2
     
     # Crear tabla MBR
-    if ! retry_command parted -s "$TARGET_DISK" mklabel msdos; then
+    echo -e "${CYAN}Creando tabla MBR (dos)...${RESET}"
+    if ! parted -s "$TARGET_DISK" mklabel msdos; then
         log "ERROR" "Fallo al crear tabla MBR"
         return 1
     fi
+    sleep 1
     
     echo -e "\n${CYAN}Creando particiones...${RESET}"
     
-    # Crear particiones con retry
-    retry_command parted -s "$TARGET_DISK" \
-        mkpart primary ext4 1MiB "${boot_size}MiB" \
-        set 1 boot on \
-        mkpart primary ext4 "${boot_size}MiB" "$((boot_size + root_size))MiB" \
-        mkpart primary linux-swap "$((boot_size + root_size))MiB" 100%
-    
-    sleep 2  # Esperar a que el kernel detecte las nuevas particiones
-    
-    # Formatear particiones
-    local boot_part="${TARGET_DISK}1"
-    local root_part="${TARGET_DISK}2"
-    local swap_part="${TARGET_DISK}3"
-    
-    echo -e "${CYAN}Formateando particiones...${RESET}"
-    
-    # Formatear BOOT
-    echo -ne "  BOOT (${boot_part})... "
-    if retry_command mkfs.ext4 -F "$boot_part"; then
+    # Partición BOOT
+    echo -ne "  • Creando partición BOOT... "
+    if parted -s "$TARGET_DISK" mkpart primary ext4 1MiB "${boot_size}MiB" && \
+       parted -s "$TARGET_DISK" set 1 boot on; then
         echo -e "${GREEN}✔${RESET}"
     else
         echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al crear partición BOOT"
+        return 1
+    fi
+    
+    # Partición ROOT
+    echo -ne "  • Creando partición ROOT... "
+    local root_end=$((boot_size + root_size))
+    if parted -s "$TARGET_DISK" mkpart primary ext4 "${boot_size}MiB" "${root_end}MiB"; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al crear partición ROOT"
+        return 1
+    fi
+    
+    # Partición SWAP
+    echo -ne "  • Creando partición SWAP... "
+    if parted -s "$TARGET_DISK" mkpart primary linux-swap "${root_end}MiB" 100%; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al crear partición SWAP"
+        return 1
+    fi
+    
+    # Actualizar kernel
+    partprobe "$TARGET_DISK"
+    sleep 3
+    
+    # Definir nombres de particiones
+    local boot_part="${partition_prefix}1"
+    local root_part="${partition_prefix}2"
+    local swap_part="${partition_prefix}3"
+    
+    # Verificar que las particiones existen
+    for part in "$boot_part" "$root_part" "$swap_part"; do
+        if [[ ! -b "$part" ]]; then
+            log "ERROR" "La partición $part no existe"
+            return 1
+        fi
+    done
+    
+    echo -e "\n${CYAN}Formateando particiones...${RESET}"
+    
+    # Formatear BOOT
+    echo -ne "  • Formateando BOOT (${boot_part})... "
+    if mkfs.ext4 -F -L "BOOT" "$boot_part" &>/dev/null; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición BOOT"
         return 1
     fi
     
     # Formatear ROOT
-    echo -ne "  ROOT (${root_part})... "
-    if retry_command mkfs.ext4 -F "$root_part"; then
+    echo -ne "  • Formateando ROOT (${root_part})... "
+    if mkfs.ext4 -F -L "ROOT" "$root_part" &>/dev/null; then
         echo -e "${GREEN}✔${RESET}"
     else
         echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición ROOT"
         return 1
     fi
     
     # Formatear SWAP
-    echo -ne "  SWAP (${swap_part})... "
-    if retry_command mkswap "$swap_part" && retry_command swapon "$swap_part"; then
+    echo -ne "  • Formateando SWAP (${swap_part})... "
+    if mkswap -L "SWAP" "$swap_part" &>/dev/null && swapon "$swap_part" &>/dev/null; then
         echo -e "${GREEN}✔${RESET}"
     else
         echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al formatear partición SWAP"
         return 1
     fi
     
     # Montar particiones
-    mount_partitions "$root_part" "$boot_part" || return 1
+    echo -e "\n${CYAN}Montando particiones...${RESET}"
     
+    # Montar ROOT
+    echo -ne "  • Montando ROOT... "
+    if mount "$root_part" /mnt; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar partición ROOT"
+        return 1
+    fi
+    
+    # Crear y montar BOOT
+    echo -ne "  • Montando BOOT... "
+    mkdir -p /mnt/boot
+    if mount "$boot_part" /mnt/boot; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${RED}✘${RESET}"
+        log "ERROR" "Fallo al montar partición BOOT"
+        return 1
+    fi
+    
+    # Guardar información
+    echo "$boot_part" > /tmp/boot_partition
+    echo "$root_part" > /tmp/root_partition
+    echo "$swap_part" > /tmp/swap_partition
+    
+    log "SUCCESS" "Particiones MBR creadas y montadas correctamente"
     return 0
 }
 

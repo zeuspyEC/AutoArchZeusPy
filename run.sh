@@ -745,119 +745,168 @@ setup_network_connection() {
 detect_current_wifi_connection() {
     log "INFO" "Detectando conexión WiFi activa"
     
-    # Obtener información de la conexión WiFi activa
+    # Variables para guardar información
     local current_ssid=""
     local current_interface=""
     local wifi_password=""
     
-    # Método 1: Usar nmcli para obtener conexión activa
-    if command -v nmcli &>/dev/null; then
-        echo -e "${CYAN}Detectando red WiFi activa con NetworkManager...${RESET}"
+    echo -e "${CYAN}Buscando conexión WiFi activa...${RESET}"
+    
+    # MÉTODO 1: Detectar con iwctl (más confiable en LiveCD)
+    if command -v iwctl &>/dev/null; then
+        echo -e "${CYAN}Detectando con iwctl...${RESET}"
         
-        # Obtener SSID de la conexión activa
-        current_ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes:' | cut -d':' -f2)
+        # Obtener todas las interfaces wireless
+        local wireless_interfaces
+        wireless_interfaces=($(iwctl device list 2>/dev/null | grep -E "wlan[0-9]+|wlp[0-9]s[0-9]+" -o))
         
-        if [ -n "$current_ssid" ]; then
-            echo -e "${GREEN}✅ Red WiFi detectada: $current_ssid${RESET}"
+        for interface in "${wireless_interfaces[@]}"; do
+            # Verificar estado de la interfaz
+            local station_info
+            station_info=$(iwctl station "$interface" show 2>/dev/null)
             
-            # Obtener interfaz activa
-            current_interface=$(nmcli -t -f device,state dev | grep ':connected' | grep 'wifi' | cut -d':' -f1 | head -1)
-            
-            # Intentar obtener la contraseña de la conexión
-            if nmcli --show-secrets connection show "$current_ssid" &>/dev/null; then
-                wifi_password=$(nmcli --show-secrets -f 802-11-wireless-security.psk connection show "$current_ssid" 2>/dev/null | grep "802-11-wireless-security.psk:" | cut -d':' -f2 | tr -d ' ')
+            if echo "$station_info" | grep -q "State.*connected"; then
+                # Extraer SSID de la conexión activa
+                current_ssid=$(echo "$station_info" | grep "Connected network" | awk '{print $NF}')
+                current_interface="$interface"
                 
-                if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
-                    # Intentar método alternativo para obtener clave
-                    wifi_password=$(nmcli --show-secrets connection show "$current_ssid" 2>/dev/null | grep -E "(psk|password)" | grep -v "psk-flags" | head -1 | cut -d':' -f2 | tr -d ' ')
+                if [ -n "$current_ssid" ]; then
+                    echo -e "${GREEN}✅ WiFi detectado via iwctl:${RESET}"
+                    echo -e "  Interface: ${CYAN}$current_interface${RESET}"
+                    echo -e "  SSID: ${CYAN}$current_ssid${RESET}"
+                    
+                    # Solicitar contraseña al usuario
+                    echo -e "\n${YELLOW}⚠ Necesitamos la contraseña para guardarla${RESET}"
+                    echo -ne "${YELLOW}Ingrese la contraseña de '$current_ssid':${RESET} "
+                    read -rs wifi_password
+                    echo
+                    
+                    # Validar que se ingresó una contraseña
+                    if [ -z "$wifi_password" ]; then
+                        echo -e "${RED}No se ingresó contraseña, reintentando...${RESET}"
+                        echo -ne "${YELLOW}Por favor, ingrese la contraseña (es importante):${RESET} "
+                        read -rs wifi_password
+                        echo
+                    fi
+                    
+                    # Guardar credenciales inmediatamente
+                    save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
+                    return 0
                 fi
             fi
+        done
+    fi
+    
+    # MÉTODO 2: NetworkManager (si está disponible)
+    if command -v nmcli &>/dev/null; then
+        echo -e "${CYAN}Detectando con NetworkManager...${RESET}"
+        
+        # Verificar si NetworkManager está activo
+        if systemctl is-active NetworkManager &>/dev/null; then
+            # Obtener SSID activo
+            current_ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes:' | cut -d':' -f2)
             
-            # Si no se pudo obtener la clave, usar método manual simple
-            if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
-                echo -e "${YELLOW}⚠ No se pudo detectar la contraseña automáticamente${RESET}"
-                echo -e "${WHITE}Red detectada: $current_ssid${RESET}"
-                echo -ne "${YELLOW}Ingrese la contraseña de esta red:${RESET} "
-                read -rs wifi_password
-                echo
-            else
-                echo -e "${GREEN}✅ Contraseña detectada automáticamente${RESET}"
-            fi
-            
-            # Verificar conexión
-            if ping -c 1 archlinux.org &>/dev/null; then
-                log "SUCCESS" "Conexión WiFi activa confirmada"
+            if [ -n "$current_ssid" ]; then
+                echo -e "${GREEN}✅ WiFi detectado via NetworkManager:${RESET}"
+                echo -e "  SSID: ${CYAN}$current_ssid${RESET}"
                 
-                # Guardar credenciales para post-instalación
-                mkdir -p /tmp/zeuspyec_install
-                cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
-# Configuración de Red ZeuspyEC
-# Este archivo contiene las credenciales de red usadas durante la instalación
-# Generado automáticamente el $(date)
-
-CONNECTION_TYPE=wifi
-WIFI_SSID=$current_ssid
-WIFI_PASSWORD=$wifi_password
-WIFI_INTERFACE=$current_interface
-INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-EOF
-                log "INFO" "Credenciales WiFi guardadas en network_credentials.txt"
+                # Obtener interfaz
+                current_interface=$(nmcli -t -f device,state dev | grep ':connected' | head -1 | cut -d':' -f1)
+                
+                # Intentar obtener contraseña de NetworkManager
+                wifi_password=$(nmcli --show-secrets -f 802-11-wireless-security.psk connection show "$current_ssid" 2>/dev/null | grep "psk:" | cut -d':' -f2 | tr -d ' ')
+                
+                # Si no se pudo obtener, pedirla al usuario
+                if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
+                    echo -e "\n${YELLOW}⚠ No se pudo obtener la contraseña automáticamente${RESET}"
+                    echo -ne "${YELLOW}Ingrese la contraseña de '$current_ssid':${RESET} "
+                    read -rs wifi_password
+                    echo
+                else
+                    echo -e "${GREEN}✅ Contraseña obtenida de NetworkManager${RESET}"
+                fi
+                
+                # Guardar credenciales
+                save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
                 return 0
             fi
         fi
     fi
     
-    # Método 2: Usar iwctl si nmcli no funciona
-    if command -v iwctl &>/dev/null; then
-        echo -e "${CYAN}Detectando con iwctl...${RESET}"
+    # MÉTODO 3: Verificar conectividad y pedir datos manualmente
+    if ping -c 1 archlinux.org &>/dev/null; then
+        echo -e "${GREEN}✅ Hay conexión a Internet activa${RESET}"
+        echo -e "${YELLOW}Pero no se pudo detectar los detalles de la red${RESET}"
         
-        # Obtener interfaces wireless
-        local wireless_interfaces
-        wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]+" | head -1))
+        # Pedir información manualmente
+        echo -e "\n${CYAN}Por favor, ingrese los datos de su conexión WiFi actual:${RESET}"
+        echo -ne "${YELLOW}SSID (nombre de la red WiFi):${RESET} "
+        read -r current_ssid
+        echo -ne "${YELLOW}Contraseña:${RESET} "
+        read -rs wifi_password
+        echo
         
-        if [ ${#wireless_interfaces[@]} -gt 0 ]; then
-            current_interface=${wireless_interfaces[0]}
-            
-            # Obtener estado de conexión
-            local connection_info
-            connection_info=$(iwctl station "$current_interface" show 2>/dev/null)
-            
-            if echo "$connection_info" | grep -q "connected"; then
-                current_ssid=$(echo "$connection_info" | grep "Connected network" | awk '{print $NF}')
-                
-                if [ -n "$current_ssid" ]; then
-                    echo -e "${GREEN}✅ Red WiFi activa detectada: $current_ssid${RESET}"
-                    echo -ne "${YELLOW}Ingrese la contraseña de esta red:${RESET} "
-                    read -rs wifi_password
-                    echo
-                    
-                    # Guardar credenciales
-                    mkdir -p /tmp/zeuspyec_install
-                    cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
-# Configuración de Red ZeuspyEC
-# Este archivo contiene las credenciales de red usadas durante la instalación
-# Generado automáticamente el $(date)
-
-CONNECTION_TYPE=wifi
-WIFI_SSID=$current_ssid
-WIFI_PASSWORD=$wifi_password
-WIFI_INTERFACE=$current_interface
-INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-EOF
-                    log "INFO" "Credenciales WiFi guardadas en network_credentials.txt"
-                    return 0
-                fi
-            fi
+        # Detectar interfaz wireless
+        current_interface=$(ip link show | grep -E "wlan[0-9]+|wlp[0-9]s[0-9]+" -o | head -1)
+        if [ -z "$current_interface" ]; then
+            current_interface="wlan0"  # Default
         fi
+        
+        # Guardar credenciales
+        save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
+        return 0
     fi
     
     log "WARN" "No se detectó conexión WiFi activa"
     return 1
 }
 
+# Nueva función para guardar credenciales de forma consistente
+save_network_credentials() {
+    local conn_type="$1"
+    local ssid="$2"
+    local password="$3"
+    local interface="$4"
+    
+    # Crear directorio si no existe
+    mkdir -p /tmp/zeuspyec_install
+    
+    # Guardar credenciales
+    cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
+# Configuración de Red ZeuspyEC
+# Este archivo contiene las credenciales de red usadas durante la instalación
+# Generado automáticamente el $(date)
+
+CONNECTION_TYPE=$conn_type
+WIFI_SSID=$ssid
+WIFI_PASSWORD=$password
+WIFI_INTERFACE=$interface
+INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+
+    # Verificar que se guardó correctamente
+    if [ -f /tmp/zeuspyec_install/network_credentials.txt ]; then
+        echo -e "${GREEN}✅ Credenciales guardadas exitosamente${RESET}"
+        echo -e "${CYAN}Archivo: /tmp/zeuspyec_install/network_credentials.txt${RESET}"
+        
+        # Mostrar resumen (sin contraseña)
+        echo -e "\n${WHITE}Resumen de configuración guardada:${RESET}"
+        echo -e "  Tipo: ${CYAN}$conn_type${RESET}"
+        echo -e "  SSID: ${CYAN}$ssid${RESET}"
+        echo -e "  Interface: ${CYAN}$interface${RESET}"
+        echo -e "  Contraseña: ${CYAN}[GUARDADA]${RESET}"
+        
+        log "SUCCESS" "Credenciales WiFi guardadas correctamente"
+    else
+        log "ERROR" "No se pudieron guardar las credenciales"
+        echo -e "${RED}✘ Error al guardar credenciales${RESET}"
+    fi
+}
+
 setup_wifi_connection() {
     # Primero intentar detectar conexión WiFi activa
     if detect_current_wifi_connection; then
+        echo -e "${GREEN}✅ Usando conexión WiFi existente${RESET}"
         return 0
     fi
     
@@ -1530,80 +1579,81 @@ install_base_system() {
 install_essential_packages() {
     log "INFO" "Instalando paquetes esenciales"
     
+    # VERIFICAR CREDENCIALES PRIMERO
+    if [[ ! -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
+        echo -e "${YELLOW}⚠ No hay credenciales guardadas, intentando detectar...${RESET}"
+        detect_current_wifi_connection
+    fi
+    # PRIMERO: Configurar mirrors si no se ha hecho
+    if [[ ! -f /etc/pacman.d/mirrorlist.backup ]]; then
+        configure_mirrorlist
+    fi
+    
     # Verificar y asegurar conexión de red
     echo -e "${CYAN}Verificando conexión de red...${RESET}"
-    local max_retries=3
+    local max_retries=5  # Aumentar reintentos
     local retry_count=0
     
     while ((retry_count < max_retries)); do
-        if ping -c 2 -W 3 archlinux.org &>/dev/null; then
-            echo -e "${GREEN}✔ Conexión verificada${RESET}"
+        if ping -c 2 -W 5 archlinux.org &>/dev/null; then
+            echo -e "${GREEN}✓ Conexión verificada${RESET}"
             break
         else
             ((retry_count++))
             echo -e "${YELLOW}⚠ Sin conexión, intento $retry_count de $max_retries${RESET}"
             
             if ((retry_count < max_retries)); then
-                echo -e "${CYAN}Intentando reconfigurar la red...${RESET}"
+                echo -e "${CYAN}Reintentando configuración de red...${RESET}"
                 
-                # Intentar configuración automática de red
-                configure_network_automatic
-                sleep 3
+                # Intentar reconectar con credenciales guardadas
+                if [[ -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
+                    source /tmp/zeuspyec_install/network_credentials.txt
+                    
+                    if [[ "$CONNECTION_TYPE" == "wifi" ]] && [[ -n "$WIFI_SSID" ]] && [[ -n "$WIFI_PASSWORD" ]]; then
+                        echo -e "${CYAN}Reconectando a WiFi: $WIFI_SSID${RESET}"
+                        
+                        # Método 1: iwctl
+                        if command -v iwctl &>/dev/null; then
+                            iwctl station wlan0 disconnect 2>/dev/null
+                            sleep 2
+                            iwctl station wlan0 connect "$WIFI_SSID" --passphrase "$WIFI_PASSWORD" 2>/dev/null
+                            sleep 5
+                        fi
+                        
+                        # Método 2: NetworkManager
+                        if ! ping -c 1 archlinux.org &>/dev/null && command -v nmcli &>/dev/null; then
+                            systemctl restart NetworkManager 2>/dev/null
+                            sleep 3
+                            nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD" 2>/dev/null
+                            sleep 5
+                        fi
+                    fi
+                else
+                    # Si no hay credenciales, intentar dhcpcd
+                    dhcpcd 2>/dev/null &
+                    sleep 5
+                fi
             else
                 log "ERROR" "Sin conexión a Internet después de $max_retries intentos"
-                echo -e "${RED}✘ Configure manualmente la conexión de red y reinicie el script${RESET}"
+                echo -e "${RED}✘ Configure manualmente la conexión de red${RESET}"
                 return 1
             fi
         fi
     done
     
-    # Actualizar base de datos de pacman
+    # Actualizar base de datos de pacman con reintentos
     echo -e "${CYAN}Actualizando base de datos de pacman...${RESET}"
-    if ! pacman -Sy; then
-        log "ERROR" "Fallo al actualizar base de datos de pacman"
-        return 1
-    fi
-    
-    # Solo paquetes esenciales para un sistema funcional
-    local packages=(
-        "${ESSENTIAL_PACKAGES[@]}"
-    )
-    
-    echo -e "\n${INFO}💡 Instalación Minimalista Activada${RESET}"
-    echo -e "${YELLOW}Solo se instalarán los paquetes esenciales para arrancar el sistema${RESET}"
-    echo -e "${YELLOW}Los paquetes adicionales se instalarán después del primer arranque${RESET}"
-    
-    echo -e "\n${WHITE}Paquetes a instalar:${RESET}"
-    printf '%s\n' "${packages[@]}" | column | sed 's/^/  /'
-    
-    # Instalar paquetes
-    echo -e "\n${CYAN}Instalando paquetes...${RESET}"
-    # Reconexión forzada antes de pacstrap
-    if [ -f /tmp/zeuspyec_install/network_credentials.txt ]; then
-        source /tmp/zeuspyec_install/network_credentials.txt
-        if [ "$CONNECTION_TYPE" = "wifi" ]; then
-            echo -e "${YELLOW}Reconectando WiFi antes de instalar paquetes...${RESET}"
-            nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD" || \
-            iwctl station "$WIFI_INTERFACE" connect "$WIFI_SSID" --passphrase "$WIFI_PASSWORD"
-            sleep 5
+    local pacman_retry=0
+    while ((pacman_retry < 3)); do
+        if pacman -Sy --noconfirm; then
+            break
+        else
+            ((pacman_retry++))
+            echo -e "${YELLOW}Reintentando actualización de pacman ($pacman_retry/3)...${RESET}"
+            sleep 3
         fi
-    fi
-
-    # Verificar conexión una vez más
-    if ! ping -c 2 archlinux.org &>/dev/null; then
-        echo -e "${RED}Sin conexión. Intentando dhcpcd...${RESET}"
-        dhcpcd &>/dev/null
-        sleep 3
-    fi
-    if ! pacstrap /mnt "${packages[@]}"; then
-        log "ERROR" "Fallo al instalar paquetes base"
-        return 1
-    fi
+    done
     
-    log "SUCCESS" "Paquetes base instalados correctamente"
-    return 0
-}
-
 generate_fstab() {
     log "INFO" "Generando fstab"
     

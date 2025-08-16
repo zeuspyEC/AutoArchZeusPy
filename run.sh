@@ -774,36 +774,86 @@ detect_current_wifi_connection() {
             station_info=$(iwctl station "$interface" show 2>/dev/null)
             
             if echo "$station_info" | grep -q "State.*connected"; then
-                # CORRECCIÓN COMPLETA: Capturar SSID completo y limpiar SOLO espacios del inicio/final
+                # Capturar SSID completo y limpiar SOLO espacios del inicio/final
                 current_ssid=$(echo "$station_info" | grep "Connected network" | sed 's/.*Connected network[[:space:]]*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 current_interface="$interface"
                 
                 if [ -n "$current_ssid" ]; then
                     echo -e "${GREEN}✅ WiFi detectado via iwctl:${RESET}"
                     echo -e "  Interface: ${CYAN}$current_interface${RESET}"
-                    echo -e "  SSID: ${CYAN}'$current_ssid'${RESET}"
+                    echo -e "  SSID: ${CYAN}[$current_ssid]${RESET}"
                     
-                    # DEBUG - Ver exactamente qué se capturó
-                    echo -e "${YELLOW}DEBUG - SSID capturado: [${current_ssid}]${RESET}"
-                    echo -e "${YELLOW}DEBUG - Longitud: $(echo -n "$current_ssid" | wc -c) caracteres${RESET}"
-                    
-                    # Solicitar contraseña al usuario
-                    echo -e "\n${YELLOW}⚠ Necesitamos la contraseña para guardarla${RESET}"
-                    echo -ne "${YELLOW}Ingrese la contraseña de '$current_ssid':${RESET} "
-                    read -rs wifi_password
-                    echo
-                    
-                    # Validar que se ingresó una contraseña
-                    if [ -z "$wifi_password" ]; then
-                        echo -e "${RED}No se ingresó contraseña, reintentando...${RESET}"
-                        echo -ne "${YELLOW}Por favor, ingrese la contraseña (es importante):${RESET} "
-                        read -rs wifi_password
-                        echo
+                    # VERIFICAR CONEXIÓN ACTUAL
+                    echo -ne "${CYAN}Verificando conexión actual... ${RESET}"
+                    if ping -c 2 -W 3 archlinux.org &>/dev/null; then
+                        echo -e "${GREEN}✔ Conectado${RESET}"
+                    else
+                        echo -e "${YELLOW}⚠ Sin conexión a Internet${RESET}"
                     fi
                     
-                    # Guardar credenciales inmediatamente
-                    save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
-                    return 0
+                    # Solicitar contraseña al usuario - MÁS DIRECTO
+                    echo -e "\n${YELLOW}⚠ Necesitamos guardar la contraseña para reconexión automática${RESET}"
+                    echo -e "${WHITE}SSID detectado: ${CYAN}$current_ssid${RESET}"
+                    
+                    # Loop hasta obtener contraseña válida
+                    while [ -z "$wifi_password" ]; do
+                        echo -ne "${YELLOW}Ingrese la contraseña WiFi:${RESET} "
+                        read -rs wifi_password
+                        echo
+                        
+                        if [ -z "$wifi_password" ]; then
+                            echo -e "${RED}✘ La contraseña no puede estar vacía${RESET}"
+                        else
+                            # MOSTRAR CONTRASEÑA PARA CONFIRMAR
+                            echo -e "${WHITE}Contraseña ingresada: ${CYAN}[${wifi_password}]${RESET}"
+                            echo -ne "${YELLOW}¿Es correcta? [S/n]:${RESET} "
+                            read -r confirm
+                            
+                            if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                                wifi_password=""
+                                echo -e "${YELLOW}Intente nuevamente...${RESET}"
+                            else
+                                echo -e "${GREEN}✔ Contraseña confirmada${RESET}"
+                                break
+                            fi
+                        fi
+                    done
+                    
+                    # TEST DE CONEXIÓN CON LA CONTRASEÑA
+                    echo -e "\n${CYAN}Probando reconexión con las credenciales...${RESET}"
+                    iwctl station "$interface" disconnect 2>/dev/null
+                    sleep 2
+                    
+                    echo -ne "${CYAN}Conectando a '$current_ssid'... ${RESET}"
+                    if iwctl station "$interface" connect "$current_ssid" --passphrase "$wifi_password" 2>/dev/null; then
+                        sleep 4
+                        
+                        # VERIFICAR CON PING
+                        if ping -c 2 -W 3 archlinux.org &>/dev/null; then
+                            echo -e "${GREEN}✔ Conexión exitosa${RESET}"
+                            
+                            # Guardar credenciales SOLO si funciona
+                            save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
+                            return 0
+                        else
+                            echo -e "${RED}✘ Conectado pero sin Internet${RESET}"
+                            echo -e "${YELLOW}Verificando gateway...${RESET}"
+                            ip route | grep default
+                        fi
+                    else
+                        echo -e "${RED}✘ No se pudo conectar${RESET}"
+                        echo -e "${YELLOW}La contraseña podría ser incorrecta${RESET}"
+                    fi
+                    
+                    # Preguntar si quiere reintentar
+                    echo -ne "${YELLOW}¿Desea intentar con otra contraseña? [S/n]:${RESET} "
+                    read -r retry
+                    if [[ ! "$retry" =~ ^[Nn]$ ]]; then
+                        wifi_password=""
+                        # Recursión para reintentar
+                        detect_current_wifi_connection
+                        return $?
+                    fi
                 fi
             fi
         done
@@ -815,16 +865,12 @@ detect_current_wifi_connection() {
         
         # Verificar si NetworkManager está activo
         if systemctl is-active NetworkManager &>/dev/null; then
-            # Obtener SSID activo - CORREGIDO para capturar SSID completo y limpiar espacios
+            # Obtener SSID activo
             current_ssid=$(nmcli -t -f active,ssid dev wifi | grep '^yes:' | sed 's/^yes://' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             
             if [ -n "$current_ssid" ]; then
                 echo -e "${GREEN}✅ WiFi detectado via NetworkManager:${RESET}"
-                echo -e "  SSID: ${CYAN}'$current_ssid'${RESET}"
-                
-                # DEBUG
-                echo -e "${YELLOW}DEBUG - SSID capturado: [${current_ssid}]${RESET}"
-                echo -e "${YELLOW}DEBUG - Longitud: $(echo -n "$current_ssid" | wc -c) caracteres${RESET}"
+                echo -e "  SSID: ${CYAN}[$current_ssid]${RESET}"
                 
                 # Obtener interfaz
                 current_interface=$(nmcli -t -f device,state dev | grep ':connected' | head -1 | cut -d':' -f1)
@@ -835,16 +881,37 @@ detect_current_wifi_connection() {
                 # Si no se pudo obtener, pedirla al usuario
                 if [ -z "$wifi_password" ] || [ "$wifi_password" = "--" ]; then
                     echo -e "\n${YELLOW}⚠ No se pudo obtener la contraseña automáticamente${RESET}"
-                    echo -ne "${YELLOW}Ingrese la contraseña de '$current_ssid':${RESET} "
-                    read -rs wifi_password
-                    echo
+                    
+                    while [ -z "$wifi_password" ]; do
+                        echo -ne "${YELLOW}Ingrese la contraseña de '$current_ssid':${RESET} "
+                        read -rs wifi_password
+                        echo
+                        
+                        if [ -n "$wifi_password" ]; then
+                            # MOSTRAR Y CONFIRMAR
+                            echo -e "${WHITE}Contraseña ingresada: ${CYAN}[${wifi_password}]${RESET}"
+                            echo -ne "${YELLOW}¿Es correcta? [S/n]:${RESET} "
+                            read -r confirm
+                            
+                            if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                                wifi_password=""
+                            fi
+                        fi
+                    done
                 else
                     echo -e "${GREEN}✅ Contraseña obtenida de NetworkManager${RESET}"
+                    echo -e "${WHITE}Contraseña: ${CYAN}[${wifi_password}]${RESET}"
                 fi
                 
-                # Guardar credenciales
-                save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
-                return 0
+                # VERIFICAR CONEXIÓN
+                echo -ne "${CYAN}Verificando conexión a Internet... ${RESET}"
+                if ping -c 2 -W 3 archlinux.org &>/dev/null; then
+                    echo -e "${GREEN}✔ OK${RESET}"
+                    save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
+                    return 0
+                else
+                    echo -e "${RED}✘ Sin conexión${RESET}"
+                fi
             fi
         fi
     fi
@@ -856,18 +923,34 @@ detect_current_wifi_connection() {
         
         # Pedir información manualmente
         echo -e "\n${CYAN}Por favor, ingrese los datos de su conexión WiFi actual:${RESET}"
-        echo -ne "${YELLOW}SSID (nombre completo de la red WiFi):${RESET} "
-        read -r current_ssid
-        # Limpiar espacios del input manual SOLO al inicio y final
-        current_ssid=$(echo "$current_ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         
-        # DEBUG
-        echo -e "${YELLOW}DEBUG - SSID ingresado: [${current_ssid}]${RESET}"
-        echo -e "${YELLOW}DEBUG - Longitud: $(echo -n "$current_ssid" | wc -c) caracteres${RESET}"
+        # SSID
+        while [ -z "$current_ssid" ]; do
+            echo -ne "${YELLOW}SSID (nombre completo de la red WiFi):${RESET} "
+            read -r current_ssid
+            current_ssid=$(echo "$current_ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            
+            if [ -n "$current_ssid" ]; then
+                echo -e "${WHITE}SSID ingresado: ${CYAN}[$current_ssid]${RESET}"
+            fi
+        done
         
-        echo -ne "${YELLOW}Contraseña:${RESET} "
-        read -rs wifi_password
-        echo
+        # CONTRASEÑA
+        while [ -z "$wifi_password" ]; do
+            echo -ne "${YELLOW}Contraseña:${RESET} "
+            read -rs wifi_password
+            echo
+            
+            if [ -n "$wifi_password" ]; then
+                echo -e "${WHITE}Contraseña ingresada: ${CYAN}[${wifi_password}]${RESET}"
+                echo -ne "${YELLOW}¿Es correcta? [S/n]:${RESET} "
+                read -r confirm
+                
+                if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                    wifi_password=""
+                fi
+            fi
+        done
         
         # Detectar interfaz wireless
         current_interface=$(ip link show | grep -E "wlan[0-9]+|wlp[0-9]s[0-9]+" -o | head -1)
@@ -883,7 +966,6 @@ detect_current_wifi_connection() {
     log "WARN" "No se detectó conexión WiFi activa"
     return 1
 }
-
 # Nueva función para guardar credenciales de forma consistente
 save_network_credentials() {
     local conn_type="$1"
@@ -893,26 +975,30 @@ save_network_credentials() {
     
     mkdir -p /tmp/zeuspyec_install
     
-    # IMPORTANTE: Usar comillas para manejar espacios
+    # DEBUG - Mostrar exactamente qué se está guardando
+    echo -e "\n${CYAN}=== GUARDANDO CREDENCIALES ===${RESET}"
+    echo -e "${WHITE}Tipo: ${CYAN}$conn_type${RESET}"
+    echo -e "${WHITE}SSID: ${CYAN}[$ssid]${RESET}"
+    echo -e "${WHITE}Contraseña: ${CYAN}[$password]${RESET}"
+    echo -e "${WHITE}Interface: ${CYAN}$interface${RESET}"
+    
+    # Guardar en archivo - SIN COMILLAS ADICIONALES
     cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
+# Configuración de Red ZeuspyEC
+# Generado: $(date)
 CONNECTION_TYPE=$conn_type
-WIFI_SSID="$ssid"
-WIFI_PASSWORD="$password"
+WIFI_SSID=$ssid
+WIFI_PASSWORD=$password
 WIFI_INTERFACE=$interface
 INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 EOF
 
-    # Verificar que se guardó correctamente
     if [ -f /tmp/zeuspyec_install/network_credentials.txt ]; then
         echo -e "${GREEN}✅ Credenciales guardadas exitosamente${RESET}"
-        echo -e "${CYAN}Archivo: /tmp/zeuspyec_install/network_credentials.txt${RESET}"
         
-        # Mostrar resumen (sin contraseña)
-        echo -e "\n${WHITE}Resumen de configuración guardada:${RESET}"
-        echo -e "  Tipo: ${CYAN}$conn_type${RESET}"
-        echo -e "  SSID: ${CYAN}$ssid${RESET}"
-        echo -e "  Interface: ${CYAN}$interface${RESET}"
-        echo -e "  Contraseña: ${CYAN}[GUARDADA]${RESET}"
+        # VERIFICAR QUE SE GUARDÓ CORRECTAMENTE
+        echo -e "\n${CYAN}Verificando archivo guardado:${RESET}"
+        grep -E "WIFI_SSID|WIFI_PASSWORD" /tmp/zeuspyec_install/network_credentials.txt | sed 's/^/  /'
         
         log "SUCCESS" "Credenciales WiFi guardadas correctamente"
     else

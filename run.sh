@@ -868,18 +868,13 @@ save_network_credentials() {
     local password="$3"
     local interface="$4"
     
-    # Crear directorio si no existe
     mkdir -p /tmp/zeuspyec_install
     
-    # Guardar credenciales
+    # IMPORTANTE: Usar comillas para manejar espacios
     cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
-# Configuración de Red ZeuspyEC
-# Este archivo contiene las credenciales de red usadas durante la instalación
-# Generado automáticamente el $(date)
-
 CONNECTION_TYPE=$conn_type
-WIFI_SSID=$ssid
-WIFI_PASSWORD=$password
+WIFI_SSID="$ssid"
+WIFI_PASSWORD="$password"
 WIFI_INTERFACE=$interface
 INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 EOF
@@ -1613,7 +1608,7 @@ install_essential_packages() {
                     if [[ "$CONNECTION_TYPE" == "wifi" ]] && [[ -n "$WIFI_SSID" ]] && [[ -n "$WIFI_PASSWORD" ]]; then
                         echo -e "${CYAN}Reconectando a WiFi: $WIFI_SSID${RESET}"
                         
-                        # Método 1: iwctl
+                        # IMPORTANTE: Comillas dobles para manejar espacios
                         if command -v iwctl &>/dev/null; then
                             iwctl station wlan0 disconnect 2>/dev/null
                             sleep 2
@@ -1621,7 +1616,7 @@ install_essential_packages() {
                             sleep 5
                         fi
                         
-                        # Método 2: NetworkManager
+                        # NetworkManager también con comillas
                         if ! ping -c 1 archlinux.org &>/dev/null && command -v nmcli &>/dev/null; then
                             systemctl restart NetworkManager 2>/dev/null
                             sleep 3
@@ -1656,9 +1651,9 @@ install_essential_packages() {
     done
     
     # AQUÍ FALTABA EL CÓDIGO DE INSTALACIÓN - ESTE ES EL FIX:
+    # IMPORTANTE: Debe terminar con estos comandos y el cierre:
     echo -e "${CYAN}Instalando sistema base con pacstrap...${RESET}"
     
-    # Instalar paquetes esenciales
     if pacstrap /mnt base linux linux-firmware networkmanager grub efibootmgr sudo nano base-devel git; then
         echo -e "${GREEN}✔ Sistema base instalado correctamente${RESET}"
         log "SUCCESS" "Paquetes esenciales instalados"

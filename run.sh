@@ -278,133 +278,218 @@ detect_boot_mode() {
     
     log "INFO" "Detectando modo de arranque del sistema..."
     
-    # Método 1: Verificar directorio EFI vars (más confiable)
+    echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║    Configuración Modo de Arranque      ║${RESET}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+    
+    # Primero intentar detección automática
+    local auto_detected=""
+    
+    # Método 1: Verificar directorio EFI vars
     if [[ -d "/sys/firmware/efi/efivars" ]] && ls /sys/firmware/efi/efivars/ &>/dev/null | grep -q .; then
-        detection_methods+=("efivars:UEFI")
-        boot_detected="UEFI"
-        log "DEBUG" "Método efivars: UEFI detectado con variables EFI presentes"
+        auto_detected="UEFI"
+        log "DEBUG" "Detección automática: UEFI (efivars presente)"
     else
-        detection_methods+=("efivars:BIOS")
-        if [[ -z "$boot_detected" ]]; then
-            boot_detected="BIOS"
-        fi
-        log "DEBUG" "Método efivars: BIOS detectado o sin variables EFI"
+        auto_detected="BIOS"
+        log "DEBUG" "Detección automática: BIOS (sin efivars)"
     fi
     
-    # Método 2: Verificar con efibootmgr
-    if command -v efibootmgr &>/dev/null; then
-        if efibootmgr &>/dev/null 2>&1; then
-            detection_methods+=("efibootmgr:UEFI")
-            if [[ -z "$boot_detected" ]] || [[ "$boot_detected" == "BIOS" ]]; then
-                boot_detected="UEFI"
-            fi
-            log "DEBUG" "Método efibootmgr: UEFI confirmado"
-        else
-            detection_methods+=("efibootmgr:BIOS")
-            log "DEBUG" "Método efibootmgr: BIOS detectado"
-        fi
-    fi
+    # Mostrar información de detección automática
+    echo -e "${INFO}Detección automática:${RESET}"
+    echo -e "  • Sistema detectado: ${CYAN}$auto_detected${RESET}"
     
-    # Método 3: Verificar la tabla de particiones actual del sistema
-    local root_disk=""
-    if mountpoint -q / ; then
-        root_disk=$(df / | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//' | sed 's/p$//')
-        if [[ -b "$root_disk" ]]; then
-            local partition_table
-            partition_table=$(parted -s "$root_disk" print 2>/dev/null | grep "Partition Table" | awk '{print $3}')
-            if [[ "$partition_table" == "gpt" ]]; then
-                detection_methods+=("current_disk:GPT")
-                log "DEBUG" "Disco actual usa GPT (típico de UEFI)"
-            elif [[ "$partition_table" == "msdos" ]] || [[ "$partition_table" == "dos" ]]; then
-                detection_methods+=("current_disk:MBR")
-                log "DEBUG" "Disco actual usa MBR (típico de BIOS)"
-            fi
-        fi
-    fi
-    
-    # Determinar el modo final con validación estricta
-    if [[ "$boot_detected" == "UEFI" ]]; then
-        # Validación adicional para UEFI
-        if [[ -d "/sys/firmware/efi/efivars" ]] && ls /sys/firmware/efi/efivars/ 2>/dev/null | grep -q .; then
-            BOOT_MODE="UEFI"
-            log "SUCCESS" "Modo de arranque confirmado: UEFI"
-        else
-            # Si detectamos UEFI pero no hay efivars, es probablemente BIOS
-            BOOT_MODE="BIOS"
-            log "WARN" "Detección inconsistente, asumiendo BIOS por seguridad"
-        fi
+    if [[ "$auto_detected" == "UEFI" ]]; then
+        echo -e "  • Tabla recomendada: ${CYAN}GPT${RESET}"
+        echo -e "  • Particiones: ${WHITE}EFI (FAT32) + ROOT (EXT4) + SWAP${RESET}"
     else
-        BOOT_MODE="BIOS"
-        log "SUCCESS" "Modo de arranque confirmado: BIOS Legacy"
+        echo -e "  • Tabla recomendada: ${CYAN}MBR (DOS)${RESET}"
+        echo -e "  • Particiones: ${WHITE}BOOT (EXT4) + ROOT (EXT4) + SWAP${RESET}"
     fi
     
-    # Registrar todos los métodos de detección usados
-    log "DEBUG" "Métodos de detección utilizados: ${detection_methods[*]}"
+    # IMPORTANTE: Dar opción al usuario para elegir manualmente
+    echo -e "\n${YELLOW}¿Desea usar la configuración detectada automáticamente?${RESET}"
+    echo -e "${WHITE}Nota: Si tiene dudas o errores previos, seleccione manualmente${RESET}\n"
     
+    echo -e "${CYAN}1)${RESET} Usar detección automática (${auto_detected})"
+    echo -e "${CYAN}2)${RESET} Seleccionar manualmente"
+    echo -ne "\n${YELLOW}Seleccione opción (1-2):${RESET} "
+    read -r boot_choice
+    
+    case "$boot_choice" in
+        1)
+            BOOT_MODE="$auto_detected"
+            echo -e "${GREEN}✔ Usando modo detectado: $BOOT_MODE${RESET}"
+            ;;
+        2)
+            # Selección manual con explicación clara
+            echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
+            echo -e "${CYAN}║      Selección Manual de Arranque      ║${RESET}"
+            echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
+            
+            echo -e "${WHITE}Por favor, seleccione el modo de arranque:${RESET}\n"
+            
+            echo -e "${CYAN}1) UEFI - GPT${RESET}"
+            echo -e "   • Para sistemas modernos (2012+)"
+            echo -e "   • Requiere partición EFI"
+            echo -e "   • Tabla de particiones GPT"
+            echo -e "   • Soporta discos > 2TB"
+            
+            echo -e "\n${CYAN}2) BIOS Legacy - MBR${RESET}"
+            echo -e "   • Para sistemas antiguos o VMs"
+            echo -e "   • Partición BOOT tradicional"
+            echo -e "   • Tabla de particiones MBR/DOS"
+            echo -e "   • Máximo 4 particiones primarias"
+            
+            echo -ne "\n${YELLOW}Seleccione modo (1-2):${RESET} "
+            read -r manual_mode
+            
+            case "$manual_mode" in
+                1)
+                    BOOT_MODE="UEFI"
+                    echo -e "${GREEN}✔ Modo seleccionado: UEFI - GPT${RESET}"
+                    
+                    # Advertencia si no hay efivars
+                    if [[ ! -d "/sys/firmware/efi/efivars" ]]; then
+                        echo -e "\n${YELLOW}⚠ ADVERTENCIA: No se detectaron variables EFI${RESET}"
+                        echo -e "${YELLOW}Asegúrese de que el sistema arrancó en modo UEFI${RESET}"
+                        echo -e "${YELLOW}Si está en una VM, verifique la configuración${RESET}"
+                        echo -ne "\n${YELLOW}¿Continuar de todos modos? [S/n]:${RESET} "
+                        read -r continue_uefi
+                        if [[ "$continue_uefi" =~ ^[Nn]$ ]]; then
+                            detect_boot_mode  # Llamar recursivamente para reseleccionar
+                            return 0
+                        fi
+                    fi
+                    ;;
+                2)
+                    BOOT_MODE="BIOS"
+                    echo -e "${GREEN}✔ Modo seleccionado: BIOS Legacy - MBR${RESET}"
+                    ;;
+                *)
+                    echo -e "${RED}Opción inválida${RESET}"
+                    detect_boot_mode  # Llamar recursivamente
+                    return 0
+                    ;;
+            esac
+            ;;
+        *)
+            echo -e "${RED}Opción inválida${RESET}"
+            detect_boot_mode  # Llamar recursivamente
+            return 0
+            ;;
+    esac
+    
+    # Confirmación final
+    echo -e "\n${CYAN}════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}Configuración final:${RESET}"
+    echo -e "  • Modo de arranque: ${CYAN}$BOOT_MODE${RESET}"
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -e "  • Tabla de particiones: ${CYAN}GPT${RESET}"
+        echo -e "  • Esquema: ${WHITE}EFI + ROOT + SWAP${RESET}"
+    else
+        echo -e "  • Tabla de particiones: ${CYAN}MBR (DOS)${RESET}"
+        echo -e "  • Esquema: ${WHITE}BOOT + ROOT + SWAP${RESET}"
+    fi
+    echo -e "${CYAN}════════════════════════════════════════${RESET}\n"
+    
+    log "SUCCESS" "Modo de arranque configurado: $BOOT_MODE"
     return 0
 }
 
 # Función para validar que la detección es correcta
 validate_boot_mode_detection() {
-    log "INFO" "Validando detección del modo de arranque..."
+    log "INFO" "Validando configuración del modo de arranque..."
     
     local validation_passed=true
     local warnings=()
     
-    # Si detectamos UEFI, verificar que podemos trabajar con él
+    echo -e "\n${CYAN}Validando configuración...${RESET}"
+    
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        # Verificar que existe el directorio EFI
-        if [[ ! -d "/sys/firmware/efi" ]]; then
-            warnings+=("Modo UEFI detectado pero falta /sys/firmware/efi")
-            validation_passed=false
+        # Validaciones para UEFI
+        echo -ne "  • Verificando soporte UEFI... "
+        
+        if [[ -d "/sys/firmware/efi" ]]; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${YELLOW}⚠${RESET}"
+            warnings+=("Directorio /sys/firmware/efi no encontrado")
         fi
         
-        # Verificar que efibootmgr funciona
+        echo -ne "  • Verificando efibootmgr... "
         if command -v efibootmgr &>/dev/null; then
-            if ! efibootmgr &>/dev/null; then
-                warnings+=("efibootmgr no funciona correctamente en modo UEFI")
+            if efibootmgr &>/dev/null 2>&1; then
+                echo -e "${GREEN}✔${RESET}"
+            else
+                echo -e "${YELLOW}⚠${RESET}"
+                warnings+=("efibootmgr no puede acceder a las variables EFI")
             fi
+        else
+            echo -e "${YELLOW}⚠${RESET}"
+            warnings+=("efibootmgr no instalado - se instalará después")
         fi
         
-        # Información adicional para UEFI
-        log "INFO" "Sistema UEFI confirmado - Se usará esquema GPT"
-        log "INFO" "Particiones requeridas: EFI (FAT32), ROOT (ext4), SWAP"
+        echo -e "\n${INFO}Configuración UEFI:${RESET}"
+        echo -e "  • Se creará tabla GPT"
+        echo -e "  • Partición EFI: 512MB (FAT32)"
+        echo -e "  • Partición ROOT: Resto - SWAP (EXT4)"
+        echo -e "  • Partición SWAP: Tamaño de RAM (máx 8GB)"
         
     else  # BIOS
-        # Verificar que NO existe el directorio EFI vars
-        if [[ -d "/sys/firmware/efi/efivars" ]]; then
-            warnings+=("Directorio EFI existe pero se detectó BIOS - verificando...")
-            # Hacer una segunda verificación
-            if ls /sys/firmware/efi/efivars/ 2>/dev/null | grep -q .; then
-                log "ERROR" "Inconsistencia: EFI vars presentes pero modo BIOS detectado"
-                log "WARN" "Cambiando a modo UEFI por seguridad"
+        # Validaciones para BIOS
+        echo -ne "  • Verificando modo BIOS... "
+        
+        # Verificar que NO estamos en UEFI accidentalmente
+        if [[ -d "/sys/firmware/efi/efivars" ]] && ls /sys/firmware/efi/efivars/ 2>/dev/null | grep -q .; then
+            echo -e "${YELLOW}⚠${RESET}"
+            warnings+=("Sistema parece estar en UEFI pero se seleccionó BIOS")
+            
+            echo -e "\n${YELLOW}⚠ ADVERTENCIA IMPORTANTE:${RESET}"
+            echo -e "${YELLOW}El sistema parece haber arrancado en modo UEFI${RESET}"
+            echo -e "${YELLOW}pero se seleccionó instalación BIOS/MBR${RESET}"
+            echo -e "\n${WHITE}Esto puede ocurrir si:${RESET}"
+            echo -e "  • Está usando una VM con configuración mixta"
+            echo -e "  • El sistema soporta ambos modos"
+            echo -e "  • Desea forzar instalación Legacy"
+            
+            echo -ne "\n${YELLOW}¿Desea cambiar a UEFI-GPT? [S/n]:${RESET} "
+            read -r change_to_uefi
+            
+            if [[ ! "$change_to_uefi" =~ ^[Nn]$ ]]; then
                 BOOT_MODE="UEFI"
-                validation_passed=true
+                echo -e "${GREEN}✔ Cambiado a modo UEFI${RESET}"
+                validate_boot_mode_detection  # Revalidar
+                return $?
             fi
+        else
+            echo -e "${GREEN}✔${RESET}"
         fi
         
-        # Información adicional para BIOS
-        log "INFO" "Sistema BIOS Legacy confirmado - Se usará esquema MBR"
-        log "INFO" "Particiones requeridas: BOOT (ext4), ROOT (ext4), SWAP"
+        echo -e "\n${INFO}Configuración BIOS Legacy:${RESET}"
+        echo -e "  • Se creará tabla MBR (DOS)"
+        echo -e "  • Partición BOOT: 512MB (EXT4)"
+        echo -e "  • Partición ROOT: Resto - SWAP (EXT4)"
+        echo -e "  • Partición SWAP: Tamaño de RAM (máx 8GB)"
     fi
     
     # Mostrar advertencias si las hay
     if [[ ${#warnings[@]} -gt 0 ]]; then
+        echo -e "\n${YELLOW}Advertencias encontradas:${RESET}"
         for warning in "${warnings[@]}"; do
-            log "WARN" "$warning"
+            echo -e "  ${YELLOW}⚠${RESET} $warning"
         done
-    fi
-    
-    if [[ "$validation_passed" == false ]]; then
-        log "ERROR" "La validación del modo de arranque falló"
-        echo -e "${YELLOW}⚠ Advertencia: Detección del modo de arranque inconsistente${RESET}"
-        echo -e "${YELLOW}Por favor, verifique su configuración de BIOS/UEFI${RESET}"
-        read -p "¿Desea continuar de todos modos? [S/n]: " -r
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
-            exit 1
+        
+        echo -ne "\n${YELLOW}¿Continuar con estas advertencias? [S/n]:${RESET} "
+        read -r continue_warnings
+        
+        if [[ "$continue_warnings" =~ ^[Nn]$ ]]; then
+            echo -e "${YELLOW}Regresando a la selección de modo...${RESET}"
+            detect_boot_mode
+            return $?
         fi
     fi
     
+    echo -e "\n${GREEN}✔ Validación completada${RESET}"
     return 0
 }
 
@@ -1104,8 +1189,9 @@ repair_mount_points() {
 prepare_disk() {
     log "INFO" "Iniciando preparación del disco"
     
-    # Verificar modo de arranque primero
+    # IMPORTANTE: Primero detectar y validar el modo de arranque
     detect_boot_mode
+    validate_boot_mode_detection
     
     # Verificar si hay sistemas operativos instalados
     detect_existing_os
@@ -1129,9 +1215,13 @@ prepare_disk() {
         local disk_name=$(echo "$disk" | awk '{print $1}')
         local disk_info="$disk"
         
-        # Agregar información de tabla de particiones
+        # Agregar información de tabla de particiones actual
         local partition_table=$(parted -s "$disk_name" print 2>/dev/null | grep "Partition Table" | awk '{print $3}')
-        [[ -n "$partition_table" ]] && disk_info="$disk_info (Tabla: $partition_table)"
+        if [[ -n "$partition_table" ]]; then
+            disk_info="$disk_info (Tabla actual: $partition_table)"
+        else
+            disk_info="$disk_info (Sin tabla de particiones)"
+        fi
         
         echo -e "${CYAN}$i)${RESET} $disk_info"
         ((i++))
@@ -1163,34 +1253,38 @@ prepare_disk() {
         fi
     fi
     
-    # Mostrar información del modo de arranque y esquema a usar
+    # Mostrar información CLARA del modo y esquema a usar
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
     echo -e "${CYAN}║     Configuración de Particionado      ║${RESET}"
     echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
     
+    echo -e "${INFO}Configuración seleccionada:${RESET}"
+    echo -e "  • Disco: ${CYAN}$TARGET_DISK${RESET}"
+    echo -e "  • Modo de arranque: ${CYAN}$BOOT_MODE${RESET}"
+    
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -e "${INFO}Modo de arranque: ${CYAN}UEFI${RESET}"
-        echo -e "${INFO}Esquema de particiones: ${CYAN}GPT${RESET}"
-        echo -e "${INFO}Particiones a crear:${RESET}"
-        echo -e "  • ${WHITE}EFI${RESET} - 512MB (FAT32)"
-        echo -e "  • ${WHITE}ROOT${RESET} - Resto del disco menos swap (EXT4)"
-        echo -e "  • ${WHITE}SWAP${RESET} - Tamaño de RAM o máximo 8GB"
+        echo -e "  • Tabla de particiones: ${CYAN}GPT${RESET}"
+        echo -e "\n${INFO}Se crearán las siguientes particiones:${RESET}"
+        echo -e "  ${WHITE}1. EFI${RESET} - 512MB (FAT32) - Bootloader UEFI"
+        echo -e "  ${WHITE}2. ROOT${RESET} - Resto menos SWAP (EXT4) - Sistema"
+        echo -e "  ${WHITE}3. SWAP${RESET} - Tamaño RAM o máx 8GB - Intercambio"
     else
-        echo -e "${INFO}Modo de arranque: ${CYAN}BIOS Legacy${RESET}"
-        echo -e "${INFO}Esquema de particiones: ${CYAN}MBR${RESET}"
-        echo -e "${INFO}Particiones a crear:${RESET}"
-        echo -e "  • ${WHITE}BOOT${RESET} - 512MB (EXT4)"
-        echo -e "  • ${WHITE}ROOT${RESET} - Resto del disco menos swap (EXT4)"
-        echo -e "  • ${WHITE}SWAP${RESET} - Tamaño de RAM o máximo 8GB"
+        echo -e "  • Tabla de particiones: ${CYAN}MBR (DOS)${RESET}"
+        echo -e "\n${INFO}Se crearán las siguientes particiones:${RESET}"
+        echo -e "  ${WHITE}1. BOOT${RESET} - 512MB (EXT4) - Bootloader BIOS"
+        echo -e "  ${WHITE}2. ROOT${RESET} - Resto menos SWAP (EXT4) - Sistema"
+        echo -e "  ${WHITE}3. SWAP${RESET} - Tamaño RAM o máx 8GB - Intercambio"
     fi
     
-    # Mostrar advertencia
+    # Mostrar advertencia CLARA
     show_warning_message || return 1
     
-    # Crear particiones según el modo de arranque
+    # IMPORTANTE: Crear particiones según el modo CONFIRMADO
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -e "\n${CYAN}Creando esquema GPT para UEFI...${RESET}"
         create_gpt_partitions || return 1
     else
+        echo -e "\n${CYAN}Creando esquema MBR para BIOS...${RESET}"
         create_mbr_partitions || return 1
     fi
     
@@ -1200,7 +1294,7 @@ prepare_disk() {
         return 1
     fi
     
-    log "SUCCESS" "Disco preparado correctamente"
+    log "SUCCESS" "Disco preparado correctamente con esquema $BOOT_MODE"
     return 0
 }
 
@@ -2136,45 +2230,102 @@ EOF
 }
 
 configure_bootloader() {
-    log "INFO" "Configurando bootloader"
+    log "INFO" "Configurando bootloader para modo $BOOT_MODE"
     
     echo -e "\n${CYAN}╔════════════════════════════════════════╗${RESET}"
     echo -e "${CYAN}║      Configuración del Bootloader      ║${RESET}"
     echo -e "${CYAN}╚════════════════════════════════════════╝${RESET}\n"
     
-    # Instalar paquetes necesarios
-    local bootloader_packages=(
-        "grub"
-        "efibootmgr"
-        "os-prober"
-        "dosfstools"
-        "mtools"
-    )
+    # Mostrar modo actual
+    echo -e "${INFO}Instalando GRUB para modo: ${CYAN}$BOOT_MODE${RESET}"
     
-    echo -e "${CYAN}Instalando paquetes del bootloader...${RESET}"
-    if ! arch-chroot /mnt pacman -S --noconfirm "${bootloader_packages[@]}"; then
-        log "ERROR" "Fallo al instalar paquetes del bootloader"
-        return 1
+    # Instalar paquetes necesarios según el modo
+    local bootloader_packages=("grub" "os-prober")
+    
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        bootloader_packages+=("efibootmgr" "dosfstools" "mtools")
+        echo -e "${INFO}Paquetes UEFI adicionales: efibootmgr, dosfstools, mtools${RESET}"
     fi
     
-    # Instalar GRUB según el modo de arranque
+    echo -e "\n${CYAN}Instalando paquetes del bootloader...${RESET}"
+    for pkg in "${bootloader_packages[@]}"; do
+        echo -ne "  • Instalando $pkg... "
+        if arch-chroot /mnt pacman -S --noconfirm "$pkg" &>/dev/null; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            log "ERROR" "Fallo al instalar $pkg"
+        fi
+    done
+    
+    # Instalar GRUB según el modo confirmado
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        echo -e "\n${CYAN}Instalando GRUB para UEFI...${RESET}"
-        if ! arch-chroot /mnt grub-install \
+        echo -e "\n${CYAN}Instalando GRUB para sistema UEFI...${RESET}"
+        
+        # Verificar que el directorio EFI existe
+        if [[ ! -d /mnt/boot/efi ]]; then
+            echo -e "${YELLOW}Creando directorio /boot/efi...${RESET}"
+            mkdir -p /mnt/boot/efi
+        fi
+        
+        # Verificar que la partición EFI está montada
+        if ! mountpoint -q /mnt/boot/efi; then
+            echo -e "${RED}ERROR: Partición EFI no montada${RESET}"
+            
+            # Intentar montar si tenemos la información
+            if [[ -f /tmp/efi_partition ]]; then
+                local efi_part=$(cat /tmp/efi_partition)
+                echo -e "${YELLOW}Intentando montar $efi_part en /mnt/boot/efi...${RESET}"
+                mount "$efi_part" /mnt/boot/efi
+            else
+                log "ERROR" "No se puede determinar la partición EFI"
+                return 1
+            fi
+        fi
+        
+        # Instalar GRUB UEFI
+        if arch-chroot /mnt grub-install \
             --target=x86_64-efi \
             --efi-directory=/boot/efi \
             --bootloader-id=GRUB \
-            --recheck; then
-            log "ERROR" "Fallo al instalar GRUB (UEFI)"
+            --recheck \
+            --verbose 2>&1 | tee -a "$LOG_FILE"; then
+            echo -e "${GREEN}✔ GRUB UEFI instalado correctamente${RESET}"
+        else
+            log "ERROR" "Fallo al instalar GRUB UEFI"
             return 1
         fi
-    else
-        echo -e "\n${CYAN}Instalando GRUB para BIOS...${RESET}"
-        if ! arch-chroot /mnt grub-install \
+        
+    else  # BIOS Mode
+        echo -e "\n${CYAN}Instalando GRUB para sistema BIOS Legacy...${RESET}"
+        
+        # Verificar que /boot está montado
+        if ! mountpoint -q /mnt/boot; then
+            echo -e "${RED}ERROR: Partición BOOT no montada${RESET}"
+            
+            # Intentar montar si tenemos la información
+            if [[ -f /tmp/boot_partition ]]; then
+                local boot_part=$(cat /tmp/boot_partition)
+                echo -e "${YELLOW}Intentando montar $boot_part en /mnt/boot...${RESET}"
+                mount "$boot_part" /mnt/boot
+            else
+                log "ERROR" "No se puede determinar la partición BOOT"
+                return 1
+            fi
+        fi
+        
+        # Instalar GRUB BIOS directamente en el MBR del disco
+        echo -e "${INFO}Instalando GRUB en MBR de $TARGET_DISK${RESET}"
+        
+        if arch-chroot /mnt grub-install \
             --target=i386-pc \
             --recheck \
-            "$TARGET_DISK"; then
-            log "ERROR" "Fallo al instalar GRUB (BIOS)"
+            --verbose \
+            "$TARGET_DISK" 2>&1 | tee -a "$LOG_FILE"; then
+            echo -e "${GREEN}✔ GRUB BIOS instalado correctamente${RESET}"
+        else
+            log "ERROR" "Fallo al instalar GRUB BIOS"
+            echo -e "${RED}Error crítico al instalar GRUB en MBR${RESET}"
             return 1
         fi
     fi
@@ -2204,41 +2355,63 @@ EOF
     
     # Generar configuración
     echo -e "${CYAN}Generando configuración de GRUB...${RESET}"
-    if ! arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg; then
+    if arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg 2>&1 | tee -a "$LOG_FILE"; then
+        echo -e "${GREEN}✔ Configuración de GRUB generada${RESET}"
+    else
         log "ERROR" "Fallo al generar configuración de GRUB"
         return 1
     fi
     
-    # Verificar instalación
-    local essential_files=(
-        "/mnt/boot/grub/grub.cfg"
-        "/mnt/etc/default/grub"
-    )
+    # Verificación final específica según modo
+    echo -e "\n${CYAN}Verificando instalación del bootloader...${RESET}"
     
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        essential_files+=("/mnt/boot/efi/EFI/GRUB/grubx64.efi")
-    else
-        essential_files+=("/mnt/boot/grub/i386-pc/core.img")
+        # Verificar archivos UEFI
+        if [[ -f /mnt/boot/efi/EFI/GRUB/grubx64.efi ]]; then
+            echo -e "${GREEN}✔ Archivo EFI encontrado${RESET}"
+        else
+            echo -e "${RED}✘ Archivo EFI no encontrado${RESET}"
+            log "ERROR" "Archivo grubx64.efi no encontrado"
+            return 1
+        fi
+        
+        # Verificar entrada en NVRAM (si es posible)
+        if arch-chroot /mnt efibootmgr 2>/dev/null | grep -q "GRUB"; then
+            echo -e "${GREEN}✔ Entrada UEFI creada${RESET}"
+        else
+            echo -e "${YELLOW}⚠ No se pudo verificar entrada UEFI${RESET}"
+        fi
+        
+    else  # BIOS
+        # Verificar archivos BIOS
+        if [[ -f /mnt/boot/grub/i386-pc/core.img ]]; then
+            echo -e "${GREEN}✔ Archivos BIOS encontrados${RESET}"
+        else
+            echo -e "${RED}✘ Archivos BIOS no encontrados${RESET}"
+            log "ERROR" "core.img no encontrado"
+            return 1
+        fi
     fi
     
-    echo -e "\n${CYAN}Verificando archivos del bootloader...${RESET}"
-    local missing_files=0
-    for file in "${essential_files[@]}"; do
-        echo -ne "${WHITE}Verificando $file...${RESET} "
-        if [[ -f "$file" ]]; then
-            echo -e "${GREEN}✔${RESET}"
-        else
-            echo -e "${RED}✘${RESET}"
-            ((missing_files++))
-        fi
-    done
-    
-    if ((missing_files > 0)); then
-        log "ERROR" "Faltan archivos esenciales del bootloader"
+    # Verificar grub.cfg
+    if [[ -f /mnt/boot/grub/grub.cfg ]]; then
+        echo -e "${GREEN}✔ grub.cfg generado${RESET}"
+    else
+        echo -e "${RED}✘ grub.cfg no encontrado${RESET}"
         return 1
     fi
     
-    log "SUCCESS" "Bootloader instalado y configurado correctamente"
+    echo -e "\n${GREEN}═══════════════════════════════════════${RESET}"
+    echo -e "${GREEN}✔ Bootloader instalado correctamente${RESET}"
+    echo -e "${GREEN}  Modo: $BOOT_MODE${RESET}"
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        echo -e "${GREEN}  Tipo: GRUB UEFI (GPT)${RESET}"
+    else
+        echo -e "${GREEN}  Tipo: GRUB BIOS (MBR)${RESET}"
+    fi
+    echo -e "${GREEN}═══════════════════════════════════════${RESET}\n"
+    
+    log "SUCCESS" "Bootloader configurado exitosamente para $BOOT_MODE"
     return 0
 }
 

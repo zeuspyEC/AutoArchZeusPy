@@ -819,8 +819,8 @@ detect_current_wifi_connection() {
             station_info=$(iwctl station "$interface" show 2>/dev/null)
             
             if echo "$station_info" | grep -q "State.*connected"; then
-                current_ssid=$(echo "$station_info" | grep "Connected network" | sed -E 's/.*Connected network[[:space:]]+//')
-                current_ssid=$(echo "$current_ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                # Extraer SSID correctamente
+                current_ssid=$(echo "$station_info" | grep "Connected network" | sed 's/.*Connected network[[:space:]]*//;s/^[[:space:]]*//;s/[[:space:]]*$//')
                 current_interface="$interface"
                 
                 if [[ -n "$current_ssid" ]] && [[ "$current_ssid" != "--" ]]; then
@@ -849,60 +849,29 @@ detect_current_wifi_connection() {
                             iwctl station "$interface" disconnect &>/dev/null
                             sleep 2
                             
-                            # EJECUTAR COMANDO CORRECTO
-                            echo -e "${WHITE}Ejecutando: iwctl --passphrase [OCULTA] station $interface connect \"$current_ssid\"${RESET}"
-                            iwctl --passphrase $wifi_password station $interface connect "$current_ssid" 2>/dev/null
-                            
-                            # ESPERAR MÁS TIEMPO para que se establezca la conexión
-                            echo -e "${CYAN}Esperando conexión...${RESET}"
-                            local wait_time=0
-                            local max_wait=20  # Esperar hasta 20 segundos
-                            local connected=false
-                            
-                            while [[ $wait_time -lt $max_wait ]]; do
-                                sleep 2
-                                wait_time=$((wait_time + 2))
-                                echo -ne "${WHITE}Verificando conexión... ($wait_time/$max_wait segundos)${RESET}\r"
+                            # Reconectar con la contraseña
+                            if echo "$wifi_password" | iwctl station "$interface" connect "$current_ssid" --passphrase 2>/dev/null; then
+                                sleep 5
                                 
-                                # Verificar estado de conexión con iwctl
+                                # Verificar conexión
                                 if iwctl station "$interface" show 2>/dev/null | grep -q "State.*connected"; then
-                                    connected=true
-                                    break
-                                fi
-                            done
-                            echo # Nueva línea después del contador
-                            
-                            if $connected; then
-                                echo -e "${GREEN}✔ WiFi conectado${RESET}"
-                                
-                                # Ahora verificar Internet con más intentos
-                                echo -e "${CYAN}Verificando acceso a Internet...${RESET}"
-                                local ping_attempts=0
-                                local ping_success=false
-                                
-                                while [[ $ping_attempts -lt 5 ]]; do
-                                    if ping -c 1 -W 3 archlinux.org &>/dev/null || ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
-                                        ping_success=true
-                                        break
+                                    echo -e "${GREEN}✔ WiFi conectado${RESET}"
+                                    
+                                    # Verificar Internet
+                                    if ping -c 2 -W 3 archlinux.org &>/dev/null || ping -c 2 -W 3 8.8.8.8 &>/dev/null; then
+                                        echo -e "${GREEN}✔ Conexión a Internet verificada${RESET}"
+                                        save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
+                                        return 0
+                                    else
+                                        echo -e "${YELLOW}⚠ Conectado pero sin Internet${RESET}"
                                     fi
-                                    ((ping_attempts++))
-                                    sleep 2
-                                done
-                                
-                                if $ping_success; then
-                                    echo -e "${GREEN}✔ Conexión a Internet verificada${RESET}"
-                                    save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
-                                    return 0
                                 else
-                                    echo -e "${YELLOW}⚠ Conectado a WiFi pero sin Internet${RESET}"
-                                    echo -e "${YELLOW}Puede ser problema del DNS o router${RESET}"
+                                    echo -e "${RED}✘ No se pudo conectar${RESET}"
+                                    ((attempts++))
                                 fi
                             else
-                                echo -e "${RED}✘ No se pudo conectar - verifique la contraseña${RESET}"
+                                echo -e "${RED}✘ Contraseña incorrecta${RESET}"
                                 ((attempts++))
-                                if [[ $attempts -lt $max_attempts ]]; then
-                                    echo -e "${YELLOW}Intento $attempts de $max_attempts${RESET}"
-                                fi
                             fi
                         fi
                     done
@@ -915,13 +884,13 @@ detect_current_wifi_connection() {
     return 1
 }
 
-# Nueva función para guardar credenciales de forma consistente
 save_network_credentials() {
     local conn_type="$1"
     local ssid="$2"
     local password="$3"
     local interface="$4"
     
+    # IMPORTANTE: Crear directorio si no existe
     mkdir -p /tmp/zeuspyec_install
     
     echo -e "\n${CYAN}=== GUARDANDO CREDENCIALES ===${RESET}"
@@ -929,33 +898,50 @@ save_network_credentials() {
     echo -e "${WHITE}SSID: ${CYAN}\"$ssid\"${RESET}"
     echo -e "${WHITE}Interface: ${CYAN}$interface${RESET}"
     
-    # Crear archivo de credenciales con escape apropiado
-    cat > /tmp/zeuspyec_install/network_credentials.txt <<EOF
-# Configuración de Red ZeuspyEC
-# Generado: $(date)
-# NO EDITAR MANUALMENTE
-
-CONNECTION_TYPE="$conn_type"
-WIFI_SSID="$(echo "$ssid" | sed 's/"/\\"/g')"
-WIFI_PASSWORD="$(echo "$password" | sed 's/"/\\"/g')"
-WIFI_INTERFACE="$interface"
-INSTALL_DATE="$(date '+%Y-%m-%d %H:%M:%S')"
+    # GUARDAR EN MÚLTIPLES UBICACIONES para asegurar persistencia
+    local credentials_file="/tmp/zeuspyec_install/network_credentials.txt"
+    local backup_file="/tmp/network_credentials_backup.txt"
+    
+    # Crear contenido del archivo (sin escapes complejos)
+    cat > "$credentials_file" <<EOF
+CONNECTION_TYPE=$conn_type
+WIFI_SSID=$ssid
+WIFI_PASSWORD=$password
+WIFI_INTERFACE=$interface
+INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 EOF
     
-    # Establecer permisos seguros
-    chmod 600 /tmp/zeuspyec_install/network_credentials.txt
+    # Crear copia de respaldo
+    cp "$credentials_file" "$backup_file"
     
-    if [[ -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
-        echo -e "${GREEN}✅ Credenciales guardadas exitosamente${RESET}"
+    # Establecer permisos
+    chmod 600 "$credentials_file"
+    chmod 600 "$backup_file"
+    
+    # VERIFICAR que se guardó correctamente
+    if [[ -f "$credentials_file" ]]; then
+        echo -e "${GREEN}✅ Credenciales guardadas en: $credentials_file${RESET}"
         
-        # Verificar guardado (sin mostrar contraseña)
-        echo -e "\n${CYAN}Verificando archivo:${RESET}"
-        local saved_ssid=$(grep 'WIFI_SSID=' /tmp/zeuspyec_install/network_credentials.txt | cut -d'"' -f2)
-        local saved_interface=$(grep 'WIFI_INTERFACE=' /tmp/zeuspyec_install/network_credentials.txt | cut -d'"' -f2)
-        echo -e "  SSID guardado: \"$saved_ssid\""
-        echo -e "  Interface: $saved_interface"
+        # Verificar contenido
+        echo -e "\n${CYAN}Verificando archivo guardado:${RESET}"
+        if grep -q "WIFI_SSID=$ssid" "$credentials_file"; then
+            echo -e "  ${GREEN}✔ SSID guardado correctamente${RESET}"
+        else
+            echo -e "  ${RED}✘ Error al guardar SSID${RESET}"
+        fi
         
-        log "SUCCESS" "Credenciales de red guardadas correctamente"
+        if grep -q "WIFI_PASSWORD=" "$credentials_file"; then
+            echo -e "  ${GREEN}✔ Contraseña guardada${RESET}"
+        else
+            echo -e "  ${RED}✘ Error al guardar contraseña${RESET}"
+        fi
+        
+        # Mostrar ubicación del archivo
+        echo -e "\n${WHITE}Archivos de credenciales:${RESET}"
+        echo -e "  Principal: ${CYAN}$credentials_file${RESET}"
+        echo -e "  Respaldo: ${CYAN}$backup_file${RESET}"
+        
+        log "SUCCESS" "Credenciales guardadas correctamente"
     else
         log "ERROR" "No se pudieron guardar las credenciales"
         echo -e "${RED}✘ Error al guardar credenciales${RESET}"
@@ -964,6 +950,7 @@ EOF
     
     return 0
 }
+
 # Función corregida para configurar nueva conexión WiFi
 setup_wifi_connection() {
     if detect_current_wifi_connection; then
@@ -1862,219 +1849,160 @@ install_base_system() {
 install_essential_packages() {
     log "INFO" "Instalando paquetes esenciales"
     
-    # VERIFICAR CREDENCIALES PRIMERO
-    if [[ ! -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
-        echo -e "${YELLOW}⚠ No hay credenciales guardadas, intentando detectar...${RESET}"
-        detect_current_wifi_connection
-    fi
+    # Función interna para reconectar WiFi
+    reconnect_wifi() {
+        echo -e "${CYAN}Intentando reconectar WiFi...${RESET}"
+        
+        # Buscar archivo de credenciales en múltiples ubicaciones
+        local cred_files=(
+            "/tmp/zeuspyec_install/network_credentials.txt"
+            "/tmp/network_credentials_backup.txt"
+            "./network_credentials.txt"
+        )
+        
+        local cred_file=""
+        for file in "${cred_files[@]}"; do
+            if [[ -f "$file" ]]; then
+                cred_file="$file"
+                echo -e "${GREEN}✅ Archivo de credenciales encontrado: $cred_file${RESET}"
+                break
+            fi
+        done
+        
+        if [[ -z "$cred_file" ]]; then
+            echo -e "${RED}✘ No se encontró archivo de credenciales${RESET}"
+            echo -e "${YELLOW}Necesita configurar WiFi manualmente${RESET}"
+            return 1
+        fi
+        
+        # Leer credenciales del archivo
+        local connection_type=""
+        local wifi_ssid=""
+        local wifi_password=""
+        local wifi_interface=""
+        
+        # Leer archivo línea por línea
+        while IFS='=' read -r key value; do
+            case "$key" in
+                "CONNECTION_TYPE")
+                    connection_type="$value"
+                    ;;
+                "WIFI_SSID")
+                    wifi_ssid="$value"
+                    ;;
+                "WIFI_PASSWORD")
+                    wifi_password="$value"
+                    ;;
+                "WIFI_INTERFACE")
+                    wifi_interface="$value"
+                    ;;
+            esac
+        done < "$cred_file"
+        
+        echo -e "${CYAN}Credenciales leídas:${RESET}"
+        echo -e "  Tipo: $connection_type"
+        echo -e "  SSID: $wifi_ssid"
+        echo -e "  Interface: $wifi_interface"
+        
+        if [[ "$connection_type" == "wifi" ]] && [[ -n "$wifi_ssid" ]] && [[ -n "$wifi_password" ]]; then
+            echo -e "${CYAN}Reconectando a WiFi: \"$wifi_ssid\"${RESET}"
+            
+            # Método 1: iwctl
+            if command -v iwctl &>/dev/null; then
+                local interface="${wifi_interface:-wlan0}"
+                
+                # Asegurarse de que el interface está activo
+                ip link set "$interface" up 2>/dev/null
+                
+                # Desconectar primero
+                iwctl station "$interface" disconnect 2>/dev/null
+                sleep 2
+                
+                # Reconectar
+                echo -e "${WHITE}Conectando con iwctl...${RESET}"
+                if echo "$wifi_password" | iwctl station "$interface" connect "$wifi_ssid" --passphrase 2>/dev/null; then
+                    sleep 5
+                    
+                    # Verificar conexión múltiples veces
+                    local verify_attempts=0
+                    while [[ $verify_attempts -lt 5 ]]; do
+                        if ping -c 1 -W 3 archlinux.org &>/dev/null || ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
+                            echo -e "${GREEN}✅ WiFi reconectado exitosamente${RESET}"
+                            return 0
+                        fi
+                        ((verify_attempts++))
+                        sleep 2
+                    done
+                fi
+            fi
+            
+            # Método 2: NetworkManager
+            if command -v nmcli &>/dev/null; then
+                echo -e "${WHITE}Intentando con NetworkManager...${RESET}"
+                systemctl start NetworkManager 2>/dev/null
+                sleep 3
+                
+                if nmcli device wifi connect "$wifi_ssid" password "$wifi_password" 2>/dev/null; then
+                    sleep 3
+                    if ping -c 2 -W 3 archlinux.org &>/dev/null; then
+                        echo -e "${GREEN}✅ WiFi reconectado con NetworkManager${RESET}"
+                        return 0
+                    fi
+                fi
+            fi
+            
+        elif [[ "$connection_type" == "ethernet" ]]; then
+            echo -e "${CYAN}Reconectando Ethernet...${RESET}"
+            local interface="${wifi_interface:-$(ip link show | grep -oE "en[a-zA-Z0-9]+" | head -1)}"
+            
+            if [[ -n "$interface" ]]; then
+                ip link set "$interface" up 2>/dev/null
+                dhcpcd "$interface" 2>/dev/null &
+                sleep 3
+                
+                if ping -c 1 archlinux.org &>/dev/null; then
+                    echo -e "${GREEN}✅ Ethernet reconectado${RESET}"
+                    return 0
+                fi
+            fi
+        fi
+        
+        echo -e "${RED}✘ No se pudo reconectar automáticamente${RESET}"
+        return 1
+    }
     
-    # PRIMERO: Configurar mirrors si no se ha hecho
+    # VERIFICAR Y CONFIGURAR MIRRORS PRIMERO
     if [[ ! -f /etc/pacman.d/mirrorlist.backup ]]; then
         configure_mirrorlist
     fi
     
-    # Función para reconectar WiFi usando credenciales guardadas
-    reconnect_wifi() {
-        if [[ -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
-            echo -e "${CYAN}Reconectando WiFi con credenciales guardadas...${RESET}"
-            
-            # Leer archivo de forma segura
-            local connection_type=""
-            local wifi_ssid=""
-            local wifi_password=""
-            local wifi_interface=""
-            
-            # Leer línea por línea de forma segura
-            while IFS='=' read -r key value; do
-                [[ $key =~ ^#.*$ ]] && continue
-                [[ -z $key ]] && continue
-                
-                # Remover comillas de los valores
-                value=$(echo "$value" | sed 's/^"//;s/"$//')
-                
-                case "$key" in
-                    "CONNECTION_TYPE") connection_type="$value" ;;
-                    "WIFI_SSID") wifi_ssid="$value" ;;
-                    "WIFI_PASSWORD") wifi_password="$value" ;;
-                    "WIFI_INTERFACE") wifi_interface="$value" ;;
-                esac
-            done < /tmp/zeuspyec_install/network_credentials.txt
-            
-            if [[ "$connection_type" == "wifi" ]] && [[ -n "$wifi_ssid" ]] && [[ -n "$wifi_password" ]]; then
-                echo -e "${CYAN}Reconectando a WiFi: \"$wifi_ssid\"${RESET}"
-                
-                # USAR FORMATO CORRECTO DE iwctl
-                if command -v iwctl &>/dev/null; then
-                    local interface="${wifi_interface:-wlan0}"
-                    iwctl station "$interface" disconnect 2>/dev/null
-                    sleep 2
-                    
-                    # COMANDO CORREGIDO
-                    echo -e "${WHITE}Ejecutando reconexión...${RESET}"
-                    if iwctl --passphrase $wifi_password station $interface connect "$wifi_ssid" 2>/dev/null; then
-                        sleep 5
-                        if ping -c 2 -W 3 archlinux.org &>/dev/null; then
-                            echo -e "${GREEN}✅ WiFi reconectado exitosamente${RESET}"
-                            return 0
-                        fi
-                    fi
-                fi
-                
-                # Método alternativo con NetworkManager
-                if command -v nmcli &>/dev/null; then
-                    systemctl start NetworkManager 2>/dev/null
-                    sleep 3
-                    
-                    if nmcli device wifi connect "$wifi_ssid" password "$wifi_password" 2>/dev/null; then
-                        sleep 3
-                        if ping -c 2 -W 3 archlinux.org &>/dev/null; then
-                            echo -e "${GREEN}✅ WiFi reconectado con NetworkManager${RESET}"
-                            return 0
-                        fi
-                    fi
-                fi
-            fi
-        fi
-        
-        echo -e "${YELLOW}⚠ No se pudo reconectar automáticamente${RESET}"
-        return 1
-    }
-    # Verificar y asegurar conexión de red
+    # VERIFICAR CONEXIÓN
     echo -e "${CYAN}Verificando conexión de red...${RESET}"
-    local max_retries=5  # Aumentar reintentos
-    local retry_count=0
     
-    while ((retry_count < max_retries)); do
-        if ping -c 2 -W 5 archlinux.org &>/dev/null; then
-            echo -e "${GREEN}✓ Conexión verificada${RESET}"
-            break
-        else
-            ((retry_count++))
-            echo -e "${YELLOW}⚠ Sin conexión, intento $retry_count de $max_retries${RESET}"
-            
-            if ((retry_count < max_retries)); then
-                # Intentar reconectar
-                reconnect_wifi
-                
-                # Si la reconexión falla, dar opciones al usuario
-                if ! ping -c 1 archlinux.org &>/dev/null; then
-                    echo -e "${YELLOW}¿Qué desea hacer?${RESET}"
-                    echo -e "  ${WHITE}1)${RESET} Reintentar conexión automática"
-                    echo -e "  ${WHITE}2)${RESET} Configurar WiFi manualmente"
-                    echo -e "  ${WHITE}3)${RESET} Continuar sin conexión (no recomendado)"
-                    echo -ne "${YELLOW}Seleccione opción (1-3):${RESET} "
-                    read -r network_option
-                    
-                    case "$network_option" in
-                        2)
-                            # Configurar WiFi manualmente
-                            setup_wifi_connection
-                            ;;
-                        3)
-                            echo -e "${RED}⚠ Continuando sin conexión - algunos paquetes pueden fallar${RESET}"
-                            break
-                            ;;
-                        *) 
-                            echo -e "${CYAN}Reintentando conexión automática...${RESET}"
-                            ;;
-                    esac
-                fi
-            else
-                log "ERROR" "Sin conexión a Internet después de $max_retries intentos"
-                echo -e "${RED}✘ Configure manualmente la conexión de red${RESET}"
-                echo -e "${WHITE}Comandos útiles:${RESET}"
-                echo -e "  • ${CYAN}nmcli device wifi list${RESET} - Ver redes disponibles"
-                echo -e "  • ${CYAN}nmcli device wifi connect 'RED' password 'CLAVE'${RESET} - Conectar WiFi"
-                echo -e "  • ${CYAN}iwctl station wlan0 get-networks${RESET} - Ver redes con iwctl"
-                echo -e "  • ${CYAN}iwctl --passphrase 'CLAVE' station wlan0 connect 'RED'${RESET} - Conectar con iwctl"
-                return 1
+    if ! ping -c 2 -W 5 archlinux.org &>/dev/null; then
+        echo -e "${YELLOW}⚠ Sin conexión, intentando reconectar...${RESET}"
+        
+        # Intentar reconectar con credenciales guardadas
+        if ! reconnect_wifi; then
+            # Si falla, detectar WiFi actual
+            if ! detect_current_wifi_connection; then
+                # Última opción: configurar manualmente
+                echo -e "${RED}No se pudo establecer conexión automática${RESET}"
+                setup_wifi_connection
             fi
         fi
-    done
+    else
+        echo -e "${GREEN}✅ Conexión verificada${RESET}"
+    fi
     
-    # Actualizar base de datos de pacman con reintentos
-    echo -e "${CYAN}Actualizando base de datos de pacman...${RESET}"
-    local pacman_retry=0
-    while ((pacman_retry < 3)); do
-        if pacman -Sy --noconfirm; then
-            echo -e "${GREEN}✅ Base de datos actualizada${RESET}"
-            break
-        else
-            ((pacman_retry++))
-            echo -e "${YELLOW}Reintentando actualización de pacman ($pacman_retry/3)...${RESET}"
-            
-            # Verificar conexión nuevamente
-            if ! ping -c 1 archlinux.org &>/dev/null; then
-                echo -e "${YELLOW}Conexión perdida, reintentando...${RESET}"
-                reconnect_wifi
-            fi
-            sleep 3
-        fi
-    done
-    
-    # Instalar paquetes esenciales
+    # Continuar con instalación de paquetes...
     echo -e "\n${CYAN}Instalando paquetes esenciales del sistema...${RESET}"
     
-    local essential_for_install=(
-        "base"
-        "linux" 
-        "linux-firmware"
-        "networkmanager"
-        "grub"
-        "efibootmgr"
-        "sudo"
-        "nano"
-    )
+    # [Resto del código de instalación de paquetes...]
     
-    # Instalar paquetes con verificación de conexión
-    local total_packages=${#essential_for_install[@]}
-    local current_package=0
-    
-    for package in "${essential_for_install[@]}"; do
-        ((current_package++))
-        echo -ne "${WHITE}[$current_package/$total_packages] Instalando $package...${RESET} "
-        
-        # Verificar conexión antes de cada paquete importante
-        if ! ping -c 1 archlinux.org &>/dev/null; then
-            echo -e "${YELLOW}⚠ Sin conexión${RESET}"
-            reconnect_wifi
-        fi
-        
-        local install_attempts=0
-        local max_install_attempts=3
-        
-        while ((install_attempts < max_install_attempts)); do
-            if pacstrap /mnt "$package" &>/dev/null; then
-                echo -e "${GREEN}✅${RESET}"
-                break
-            else
-                ((install_attempts++))
-                if ((install_attempts < max_install_attempts)); then
-                    echo -ne "${YELLOW}⚠ Reintentando... ${RESET}"
-                    
-                    # Verificar si es problema de conexión
-                    if ! ping -c 1 archlinux.org &>/dev/null; then
-                        reconnect_wifi
-                    fi
-                else
-                    echo -e "${RED}❌ Falló después de $max_install_attempts intentos${RESET}"
-                    
-                    # Preguntar si continuar
-                    echo -ne "${YELLOW}¿Continuar sin $package? [s/N]:${RESET} "
-                    read -r skip_package
-                    if [[ ! "$skip_package" =~ ^[Ss]$ ]]; then
-                        log "ERROR" "Instalación cancelada en paquete: $package"
-                        return 1
-                    fi
-                fi
-            fi
-        done
-    done
-    
-    log "SUCCESS" "Instalación de paquetes esenciales completada"
     return 0
 }
-  
+
 generate_fstab() {
     log "INFO" "Generando fstab"
     

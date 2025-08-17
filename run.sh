@@ -1978,28 +1978,205 @@ install_essential_packages() {
     
     # VERIFICAR CONEXIÓN
     echo -e "${CYAN}Verificando conexión de red...${RESET}"
+    local max_retries=5
+    local retry_count=0
     
-    if ! ping -c 2 -W 5 archlinux.org &>/dev/null; then
-        echo -e "${YELLOW}⚠ Sin conexión, intentando reconectar...${RESET}"
-        
-        # Intentar reconectar con credenciales guardadas
-        if ! reconnect_wifi; then
-            # Si falla, detectar WiFi actual
-            if ! detect_current_wifi_connection; then
-                # Última opción: configurar manualmente
-                echo -e "${RED}No se pudo establecer conexión automática${RESET}"
-                setup_wifi_connection
+    while ((retry_count < max_retries)); do
+        if ping -c 2 -W 5 archlinux.org &>/dev/null; then
+            echo -e "${GREEN}✅ Conexión verificada${RESET}"
+            break
+        else
+            ((retry_count++))
+            echo -e "${YELLOW}⚠ Sin conexión, intento $retry_count de $max_retries${RESET}"
+            
+            if ((retry_count < max_retries)); then
+                # Intentar reconectar
+                reconnect_wifi
+                
+                # Si la reconexión falla, dar opciones al usuario
+                if ! ping -c 1 archlinux.org &>/dev/null; then
+                    echo -e "${YELLOW}¿Qué desea hacer?${RESET}"
+                    echo -e "  ${WHITE}1)${RESET} Reintentar conexión automática"
+                    echo -e "  ${WHITE}2)${RESET} Configurar WiFi manualmente"
+                    echo -e "  ${WHITE}3)${RESET} Continuar sin conexión (no recomendado)"
+                    echo -ne "${YELLOW}Seleccione opción (1-3):${RESET} "
+                    read -r network_option
+                    
+                    case "$network_option" in
+                        2)
+                            setup_wifi_connection
+                            ;;
+                        3)
+                            echo -e "${RED}⚠ Continuando sin conexión - algunos paquetes pueden fallar${RESET}"
+                            break
+                            ;;
+                        *) 
+                            echo -e "${CYAN}Reintentando conexión automática...${RESET}"
+                            ;;
+                    esac
+                fi
+            else
+                log "ERROR" "Sin conexión a Internet después de $max_retries intentos"
+                return 1
             fi
         fi
+    done
+    
+    # Actualizar base de datos de pacman
+    echo -e "${CYAN}Actualizando base de datos de pacman...${RESET}"
+    local pacman_retry=0
+    while ((pacman_retry < 3)); do
+        if pacman -Sy --noconfirm; then
+            echo -e "${GREEN}✅ Base de datos actualizada${RESET}"
+            break
+        else
+            ((pacman_retry++))
+            echo -e "${YELLOW}Reintentando actualización de pacman ($pacman_retry/3)...${RESET}"
+            
+            # Verificar conexión nuevamente
+            if ! ping -c 1 archlinux.org &>/dev/null; then
+                echo -e "${YELLOW}Conexión perdida, reintentando...${RESET}"
+                reconnect_wifi
+            fi
+            sleep 3
+        fi
+    done
+    
+    # ==============================================================================
+    # AQUÍ ES DONDE REALMENTE SE INSTALAN LOS PAQUETES CON PACSTRAP
+    # ==============================================================================
+    
+    echo -e "\n${CYAN}Instalando paquetes esenciales del sistema con pacstrap...${RESET}"
+    echo -e "${WHITE}Esto puede tomar varios minutos dependiendo de su conexión...${RESET}\n"
+    
+    # Lista de paquetes esenciales mínimos
+    local essential_packages=(
+        "base"
+        "linux"
+        "linux-firmware"
+        "networkmanager"
+        "grub"
+        "efibootmgr"
+        "sudo"
+        "nano"
+        "base-devel"
+        "git"
+        "wget"
+        "curl"
+    )
+    
+    # Mostrar paquetes a instalar
+    echo -e "${WHITE}Paquetes a instalar:${RESET}"
+    for pkg in "${essential_packages[@]}"; do
+        echo -e "  • $pkg"
+    done
+    echo
+    
+    # INSTALAR CON PACSTRAP - MÉTODO 1: Todos juntos (más rápido)
+    echo -e "${CYAN}Instalando todos los paquetes base...${RESET}"
+    if pacstrap /mnt "${essential_packages[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+        echo -e "${GREEN}✅ Paquetes base instalados correctamente${RESET}"
+        log "SUCCESS" "Instalación de paquetes base completada"
     else
-        echo -e "${GREEN}✅ Conexión verificada${RESET}"
+        # Si falla, intentar uno por uno
+        echo -e "${YELLOW}⚠ Instalación masiva falló, intentando paquete por paquete...${RESET}"
+        
+        local failed_packages=()
+        local total_packages=${#essential_packages[@]}
+        local current_package=0
+        
+        for package in "${essential_packages[@]}"; do
+            ((current_package++))
+            echo -ne "${WHITE}[$current_package/$total_packages] Instalando $package...${RESET} "
+            
+            # Verificar conexión antes de cada paquete importante
+            if [[ $((current_package % 3)) -eq 0 ]]; then
+                if ! ping -c 1 archlinux.org &>/dev/null; then
+                    echo -e "${YELLOW}⚠ Reconectando...${RESET}"
+                    reconnect_wifi
+                fi
+            fi
+            
+            # Intentar instalar el paquete
+            if pacstrap /mnt "$package" &>/dev/null; then
+                echo -e "${GREEN}✅${RESET}"
+            else
+                echo -e "${RED}❌${RESET}"
+                failed_packages+=("$package")
+                
+                # Si es un paquete crítico, preguntar si continuar
+                if [[ "$package" == "base" ]] || [[ "$package" == "linux" ]] || [[ "$package" == "linux-firmware" ]]; then
+                    echo -e "${RED}ERROR: Paquete crítico '$package' no se pudo instalar${RESET}"
+                    echo -ne "${YELLOW}¿Intentar de nuevo? [S/n]:${RESET} "
+                    read -r retry_critical
+                    
+                    if [[ ! "$retry_critical" =~ ^[Nn]$ ]]; then
+                        # Reintentar con más verbosidad
+                        echo -e "${CYAN}Reintentando con salida detallada...${RESET}"
+                        pacstrap /mnt "$package" || {
+                            log "ERROR" "No se pudo instalar paquete crítico: $package"
+                            return 1
+                        }
+                    else
+                        log "ERROR" "Instalación cancelada - paquete crítico faltante: $package"
+                        return 1
+                    fi
+                fi
+            fi
+        done
+        
+        # Reportar paquetes fallidos
+        if [[ ${#failed_packages[@]} -gt 0 ]]; then
+            echo -e "\n${YELLOW}Paquetes que no se pudieron instalar:${RESET}"
+            for pkg in "${failed_packages[@]}"; do
+                echo -e "  ${RED}✘${RESET} $pkg"
+            done
+            
+            echo -ne "${YELLOW}¿Continuar de todos modos? [S/n]:${RESET} "
+            read -r continue_anyway
+            if [[ "$continue_anyway" =~ ^[Nn]$ ]]; then
+                log "ERROR" "Instalación cancelada por paquetes faltantes"
+                return 1
+            fi
+        fi
     fi
     
-    # Continuar con instalación de paquetes...
-    echo -e "\n${CYAN}Instalando paquetes esenciales del sistema...${RESET}"
+    # Verificar que el sistema base se instaló correctamente
+    echo -e "\n${CYAN}Verificando instalación del sistema base...${RESET}"
     
-    # [Resto del código de instalación de paquetes...]
+    local critical_files=(
+        "/mnt/etc/fstab"
+        "/mnt/bin/bash"
+        "/mnt/usr/bin/pacman"
+    )
     
+    local verification_failed=false
+    for file in "${critical_files[@]}"; do
+        echo -ne "${WHITE}Verificando $file...${RESET} "
+        if [[ -e "$file" ]] || [[ -L "$file" ]]; then
+            echo -e "${GREEN}✔${RESET}"
+        else
+            echo -e "${RED}✘${RESET}"
+            verification_failed=true
+        fi
+    done
+    
+    if $verification_failed; then
+        log "WARN" "Algunos archivos del sistema no se encontraron"
+        echo -e "${YELLOW}⚠ La verificación encontró problemas${RESET}"
+    else
+        echo -e "${GREEN}✅ Sistema base verificado correctamente${RESET}"
+    fi
+    
+    # Copiar las credenciales de red al sistema instalado para post-instalación
+    if [[ -f /tmp/zeuspyec_install/network_credentials.txt ]]; then
+        echo -e "\n${CYAN}Copiando credenciales de red al sistema instalado...${RESET}"
+        mkdir -p /mnt/root
+        cp /tmp/zeuspyec_install/network_credentials.txt /mnt/root/network_credentials.txt
+        echo -e "${GREEN}✅ Credenciales copiadas para post-instalación${RESET}"
+    fi
+    
+    log "SUCCESS" "Instalación de paquetes esenciales completada"
     return 0
 }
 

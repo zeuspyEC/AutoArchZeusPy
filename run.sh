@@ -723,11 +723,9 @@ detect_current_wifi_connection() {
     
     echo -e "${CYAN}Buscando conexión WiFi activa...${RESET}"
     
-    # Método 1: Detectar con iwctl
     if command -v iwctl &>/dev/null; then
         echo -e "${CYAN}Detectando con iwctl...${RESET}"
         
-        # Obtener interfaces wireless
         local wireless_interfaces
         wireless_interfaces=($(iwctl device list 2>/dev/null | grep -E "wlan[0-9]+|wlp[0-9]+s[0-9]+" -o | sort -u))
         
@@ -736,7 +734,6 @@ detect_current_wifi_connection() {
             station_info=$(iwctl station "$interface" show 2>/dev/null)
             
             if echo "$station_info" | grep -q "State.*connected"; then
-                # Extraer SSID correctamente
                 current_ssid=$(echo "$station_info" | grep "Connected network" | sed -E 's/.*Connected network[[:space:]]+//')
                 current_ssid=$(echo "$current_ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 current_interface="$interface"
@@ -746,7 +743,6 @@ detect_current_wifi_connection() {
                     echo -e "  Interface: ${CYAN}$current_interface${RESET}"
                     echo -e "  SSID: ${CYAN}\"$current_ssid\"${RESET}"
                     
-                    # Solicitar contraseña
                     echo -e "\n${YELLOW}Se necesita la contraseña para reconexión automática${RESET}"
                     echo -e "${WHITE}Ingrese la contraseña WiFi para \"$current_ssid\"${RESET}"
                     
@@ -756,35 +752,68 @@ detect_current_wifi_connection() {
                     while [[ $attempts -lt $max_attempts ]]; do
                         echo -ne "${YELLOW}Contraseña WiFi:${RESET} "
                         read -rs wifi_password
-                        echo  # Nueva línea después de la contraseña oculta
+                        echo
                         
                         if [[ -z "$wifi_password" ]]; then
                             echo -e "${RED}✘ La contraseña no puede estar vacía${RESET}"
                             ((attempts++))
                         else
-                            # Probar conexión DIRECTAMENTE con el formato correcto
                             echo -e "\n${CYAN}Probando conexión...${RESET}"
                             
                             # Desconectar primero
                             iwctl station "$interface" disconnect &>/dev/null
                             sleep 2
                             
-                            # CONEXIÓN CORREGIDA: Usar --passphrase correctamente
+                            # EJECUTAR COMANDO CORRECTO
                             echo -e "${WHITE}Ejecutando: iwctl --passphrase [OCULTA] station $interface connect \"$current_ssid\"${RESET}"
+                            iwctl --passphrase $wifi_password station $interface connect "$current_ssid" 2>/dev/null
                             
-                            if iwctl --passphrase $wifi_password station $interface connect "$current_ssid" 2>/dev/null; then
-                                sleep 5
+                            # ESPERAR MÁS TIEMPO para que se establezca la conexión
+                            echo -e "${CYAN}Esperando conexión...${RESET}"
+                            local wait_time=0
+                            local max_wait=20  # Esperar hasta 20 segundos
+                            local connected=false
+                            
+                            while [[ $wait_time -lt $max_wait ]]; do
+                                sleep 2
+                                wait_time=$((wait_time + 2))
+                                echo -ne "${WHITE}Verificando conexión... ($wait_time/$max_wait segundos)${RESET}\r"
                                 
-                                if ping -c 3 archlinux.org &>/dev/null; then
-                                    echo -e "${GREEN}✔ Conexión exitosa${RESET}"
+                                # Verificar estado de conexión con iwctl
+                                if iwctl station "$interface" show 2>/dev/null | grep -q "State.*connected"; then
+                                    connected=true
+                                    break
+                                fi
+                            done
+                            echo # Nueva línea después del contador
+                            
+                            if $connected; then
+                                echo -e "${GREEN}✔ WiFi conectado${RESET}"
+                                
+                                # Ahora verificar Internet con más intentos
+                                echo -e "${CYAN}Verificando acceso a Internet...${RESET}"
+                                local ping_attempts=0
+                                local ping_success=false
+                                
+                                while [[ $ping_attempts -lt 5 ]]; do
+                                    if ping -c 1 -W 3 archlinux.org &>/dev/null || ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
+                                        ping_success=true
+                                        break
+                                    fi
+                                    ((ping_attempts++))
+                                    sleep 2
+                                done
+                                
+                                if $ping_success; then
+                                    echo -e "${GREEN}✔ Conexión a Internet verificada${RESET}"
                                     save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
                                     return 0
                                 else
-                                    echo -e "${YELLOW}⚠ Conectado pero sin Internet${RESET}"
+                                    echo -e "${YELLOW}⚠ Conectado a WiFi pero sin Internet${RESET}"
+                                    echo -e "${YELLOW}Puede ser problema del DNS o router${RESET}"
                                 fi
                             else
                                 echo -e "${RED}✘ No se pudo conectar - verifique la contraseña${RESET}"
-
                                 ((attempts++))
                                 if [[ $attempts -lt $max_attempts ]]; then
                                     echo -e "${YELLOW}Intento $attempts de $max_attempts${RESET}"
@@ -795,31 +824,6 @@ detect_current_wifi_connection() {
                 fi
             fi
         done
-    fi
-    
-    # Si hay conexión pero no se detectaron detalles
-    if ping -c 1 archlinux.org &>/dev/null 2>&1; then
-        echo -e "${GREEN}✅ Hay conexión a Internet activa${RESET}"
-        echo -e "${YELLOW}Por favor, ingrese los datos de la red WiFi actual:${RESET}"
-        
-        # Solicitar SSID
-        while [[ -z "$current_ssid" ]]; do
-            echo -ne "${YELLOW}SSID de la red WiFi:${RESET} "
-            read -r current_ssid
-            current_ssid=$(echo "$current_ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        done
-        
-        # Solicitar contraseña DIRECTAMENTE
-        echo -ne "${YELLOW}Contraseña:${RESET} "
-        read -rs wifi_password
-        echo
-        
-        # Detectar interfaz
-        current_interface=$(ip link show | grep -E "wlan[0-9]+|wlp[0-9]+s[0-9]+" -o | head -1)
-        [[ -z "$current_interface" ]] && current_interface="wlan0"
-        
-        save_network_credentials "wifi" "$current_ssid" "$wifi_password" "$current_interface"
-        return 0
     fi
     
     log "WARN" "No se detectó conexión WiFi activa"
@@ -877,7 +881,6 @@ EOF
 }
 # Función corregida para configurar nueva conexión WiFi
 setup_wifi_connection() {
-    # Primero intentar detectar conexión existente
     if detect_current_wifi_connection; then
         echo -e "${GREEN}✅ Usando conexión WiFi existente${RESET}"
         return 0
@@ -885,7 +888,6 @@ setup_wifi_connection() {
     
     log "INFO" "Configurando nueva conexión WiFi"
     
-    # Verificar soporte wifi
     if ! command -v iwctl &>/dev/null; then
         log "ERROR" "iwd no está instalado"
         echo -e "${YELLOW}Instalando iwd...${RESET}"
@@ -894,7 +896,6 @@ setup_wifi_connection() {
         sleep 2
     fi
     
-    # Obtener interfaces wireless
     local wireless_interfaces
     wireless_interfaces=($(iwctl device list 2>/dev/null | grep -oE "wlan[0-9]+|wlp[0-9]+s[0-9]+"))
     
@@ -906,59 +907,68 @@ setup_wifi_connection() {
     local selected_interface=${wireless_interfaces[0]}
     echo -e "${WHITE}Usando interfaz WiFi: $selected_interface${RESET}"
     
-    # Escanear redes
     echo -e "\n${CYAN}Escaneando redes disponibles...${RESET}"
     iwctl station "$selected_interface" scan
     sleep 3
     
-    # Mostrar redes disponibles
     echo -e "\n${WHITE}Redes disponibles:${RESET}"
     iwctl station "$selected_interface" get-networks
     
-    # Solicitar datos de conexión
     local ssid=""
     local password=""
     
     while [[ -z "$ssid" ]]; do
-        echo -ne "\n${YELLOW}SSID de la red (nombre exacto, incluyendo espacios):${RESET} "
+        echo -ne "\n${YELLOW}SSID de la red (nombre exacto):${RESET} "
         read -r ssid
         ssid=$(echo "$ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
-        if [[ -n "$ssid" ]]; then
-            echo -e "${WHITE}SSID ingresado: ${CYAN}\"$ssid\"${RESET}"
-            echo -ne "${YELLOW}¿Es correcto? [S/n]:${RESET} "
-            read -r confirm_ssid
-            if [[ "$confirm_ssid" =~ ^[Nn]$ ]]; then
-                ssid=""
-            fi
-        fi
     done
     
-    # Solicitar contraseña DIRECTAMENTE
-    echo -e "${YELLOW}Ingrese la contraseña para \"$ssid\"${RESET}"
     echo -ne "${YELLOW}Contraseña:${RESET} "
     read -rs password
     echo
     
-    # Intentar conexión CON EL FORMATO CORRECTO
     echo -e "\n${CYAN}Conectando a \"$ssid\"...${RESET}"
-    echo -e "${WHITE}Ejecutando: iwctl --passphrase [OCULTA] station $selected_interface connect \"$ssid\"${RESET}"
     
-    # USAR EL FORMATO CORRECTO DE iwctl
-    if iwctl --passphrase $password station $selected_interface connect "$ssid" 2>/dev/null; then
-        sleep 5
-        if ping -c 3 -W 5 archlinux.org &>/dev/null; then
-            log "SUCCESS" "Conexión WiFi establecida"
-            save_network_credentials "wifi" "$ssid" "$password" "$selected_interface"
-            return 0
-        else
-            echo -e "${YELLOW}⚠ Conectado pero sin Internet${RESET}"
+    # Ejecutar comando
+    iwctl --passphrase $password station $selected_interface connect "$ssid" 2>/dev/null
+    
+    # ESPERAR Y VERIFICAR CONEXIÓN
+    echo -e "${CYAN}Esperando establecimiento de conexión...${RESET}"
+    local wait_time=0
+    local max_wait=20
+    
+    while [[ $wait_time -lt $max_wait ]]; do
+        sleep 2
+        wait_time=$((wait_time + 2))
+        echo -ne "${WHITE}Esperando... ($wait_time/$max_wait segundos)${RESET}\r"
+        
+        if iwctl station "$selected_interface" show 2>/dev/null | grep -q "State.*connected"; then
+            echo
+            echo -e "${GREEN}✔ Conectado a WiFi${RESET}"
+            
+            # Verificar Internet con múltiples intentos
+            local ping_ok=false
+            for i in {1..5}; do
+                if ping -c 1 -W 3 archlinux.org &>/dev/null || ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
+                    ping_ok=true
+                    break
+                fi
+                sleep 2
+            done
+            
+            if $ping_ok; then
+                log "SUCCESS" "Conexión WiFi establecida"
+                save_network_credentials "wifi" "$ssid" "$password" "$selected_interface"
+                return 0
+            else
+                echo -e "${YELLOW}⚠ WiFi conectado pero sin Internet${RESET}"
+            fi
+            break
         fi
-    else
-        echo -e "${RED}✘ No se pudo conectar${RESET}"
-        echo -e "${YELLOW}Verifique que la contraseña sea correcta${RESET}"
-    fi
+    done
     
+    echo
+    echo -e "${RED}✘ No se pudo establecer la conexión${RESET}"
     return 1
 }
 

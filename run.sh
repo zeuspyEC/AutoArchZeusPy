@@ -830,27 +830,36 @@ detect_current_wifi_connection() {
                     
                     echo -e "\n${YELLOW}Se necesita la contraseña para reconexión automática${RESET}"
                     echo -e "${WHITE}Ingrese la contraseña WiFi para \"$current_ssid\"${RESET}"
+                    echo -e "${CYAN}La contraseña será visible para evitar errores${RESET}"
                     
                     local attempts=0
                     local max_attempts=3
                     
                     while [[ $attempts -lt $max_attempts ]]; do
-                        echo -ne "${YELLOW}Contraseña WiFi:${RESET} "
-                        read -rs wifi_password
-                        echo
+                        # CAMBIO CRÍTICO: No usar -s para que sea visible
+                        echo -ne "${YELLOW}Contraseña WiFi (visible):${RESET} "
+                        read -r wifi_password  # Sin -s para que sea visible
                         
                         if [[ -z "$wifi_password" ]]; then
                             echo -e "${RED}✘ La contraseña no puede estar vacía${RESET}"
                             ((attempts++))
                         else
+                            # Mostrar la contraseña capturada para verificación
+                            echo -e "${CYAN}Contraseña capturada: [${wifi_password}]${RESET}"
                             echo -e "\n${CYAN}Probando conexión...${RESET}"
                             
                             # Desconectar primero
                             iwctl station "$interface" disconnect &>/dev/null
                             sleep 2
                             
-                            # Reconectar con la contraseña
-                            if echo "$wifi_password" | iwctl station "$interface" connect "$current_ssid" --passphrase 2>/dev/null; then
+                            # CAMBIO CRÍTICO: Usar la contraseña directamente con comillas
+                            # Crear archivo temporal con la contraseña para evitar problemas de escaping
+                            local temp_pass_file="/tmp/wifi_pass_$$"
+                            echo -n "$wifi_password" > "$temp_pass_file"
+                            
+                            # Reconectar usando el archivo temporal
+                            if cat "$temp_pass_file" | iwctl --passphrase="$(cat $temp_pass_file)" station "$interface" connect "$current_ssid" 2>/dev/null; then
+                                rm -f "$temp_pass_file"
                                 sleep 5
                                 
                                 # Verificar conexión
@@ -870,6 +879,7 @@ detect_current_wifi_connection() {
                                     ((attempts++))
                                 fi
                             else
+                                rm -f "$temp_pass_file"
                                 echo -e "${RED}✘ Contraseña incorrecta${RESET}"
                                 ((attempts++))
                             fi
@@ -897,19 +907,31 @@ save_network_credentials() {
     echo -e "${WHITE}Tipo: ${CYAN}$conn_type${RESET}"
     echo -e "${WHITE}SSID: ${CYAN}\"$ssid\"${RESET}"
     echo -e "${WHITE}Interface: ${CYAN}$interface${RESET}"
+    echo -e "${WHITE}Contraseña guardada: ${CYAN}[${password}]${RESET}"  # Mostrar para verificación
     
     # GUARDAR EN MÚLTIPLES UBICACIONES para asegurar persistencia
     local credentials_file="/tmp/zeuspyec_install/network_credentials.txt"
     local backup_file="/tmp/network_credentials_backup.txt"
     
-    # Crear contenido del archivo (sin escapes complejos)
-    cat > "$credentials_file" <<EOF
-CONNECTION_TYPE=$conn_type
-WIFI_SSID=$ssid
-WIFI_PASSWORD=$password
-WIFI_INTERFACE=$interface
-INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-EOF
+    # CAMBIO CRÍTICO: Usar heredoc con comillas simples para evitar interpretación
+    # Esto asegura que la contraseña se guarde EXACTAMENTE como se ingresó
+    cat > "$credentials_file" <<'CREDENTIALS_EOF'
+# Configuración de Red ZeuspyEC
+# Este archivo contiene las credenciales de red usadas durante la instalación
+CONNECTION_TYPE='$conn_type'
+WIFI_SSID='$ssid'
+WIFI_PASSWORD='$password'
+WIFI_INTERFACE='$interface'
+CREDENTIALS_EOF
+    
+    # Reemplazar las variables manteniendo los valores literales
+    sed -i "s|\$conn_type|$conn_type|g" "$credentials_file"
+    sed -i "s|\$ssid|$ssid|g" "$credentials_file"
+    sed -i "s|\$password|$password|g" "$credentials_file"
+    sed -i "s|\$interface|$interface|g" "$credentials_file"
+    
+    # Agregar fecha
+    echo "INSTALL_DATE='$(date '+%Y-%m-%d %H:%M:%S')'" >> "$credentials_file"
     
     # Crear copia de respaldo
     cp "$credentials_file" "$backup_file"
@@ -918,28 +940,25 @@ EOF
     chmod 600 "$credentials_file"
     chmod 600 "$backup_file"
     
-    # VERIFICAR que se guardó correctamente
+    # VERIFICAR que se guardó correctamente mostrando el contenido
     if [[ -f "$credentials_file" ]]; then
         echo -e "${GREEN}✅ Credenciales guardadas en: $credentials_file${RESET}"
         
-        # Verificar contenido
-        echo -e "\n${CYAN}Verificando archivo guardado:${RESET}"
-        if grep -q "WIFI_SSID=$ssid" "$credentials_file"; then
-            echo -e "  ${GREEN}✔ SSID guardado correctamente${RESET}"
-        else
-            echo -e "  ${RED}✘ Error al guardar SSID${RESET}"
-        fi
+        # Verificar contenido y mostrar para debugging
+        echo -e "\n${CYAN}Contenido del archivo guardado:${RESET}"
+        echo -e "${DIM}---inicio---${RESET}"
+        cat "$credentials_file"
+        echo -e "${DIM}---fin---${RESET}"
         
-        if grep -q "WIFI_PASSWORD=" "$credentials_file"; then
-            echo -e "  ${GREEN}✔ Contraseña guardada${RESET}"
+        # Verificar que la contraseña se guardó correctamente
+        local saved_password=$(grep "^WIFI_PASSWORD=" "$credentials_file" | cut -d"'" -f2)
+        if [[ "$saved_password" == "$password" ]]; then
+            echo -e "${GREEN}✔ Contraseña verificada correctamente${RESET}"
         else
-            echo -e "  ${RED}✘ Error al guardar contraseña${RESET}"
+            echo -e "${RED}✘ Error: La contraseña guardada no coincide${RESET}"
+            echo -e "  Original: [$password]"
+            echo -e "  Guardada: [$saved_password]"
         fi
-        
-        # Mostrar ubicación del archivo
-        echo -e "\n${WHITE}Archivos de credenciales:${RESET}"
-        echo -e "  Principal: ${CYAN}$credentials_file${RESET}"
-        echo -e "  Respaldo: ${CYAN}$backup_file${RESET}"
         
         log "SUCCESS" "Credenciales guardadas correctamente"
     else
@@ -995,52 +1014,67 @@ setup_wifi_connection() {
         ssid=$(echo "$ssid" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     done
     
-    echo -ne "${YELLOW}Contraseña:${RESET} "
-    read -rs password
-    echo
+    # CAMBIO CRÍTICO: No ocultar la contraseña
+    echo -e "${CYAN}La contraseña será visible para evitar errores${RESET}"
+    echo -ne "${YELLOW}Contraseña (visible):${RESET} "
+    read -r password  # Sin -s para que sea visible
+    
+    # Mostrar lo capturado para verificación
+    echo -e "\n${CYAN}Datos capturados:${RESET}"
+    echo -e "  SSID: [${ssid}]"
+    echo -e "  Contraseña: [${password}]"
     
     echo -e "\n${CYAN}Conectando a \"$ssid\"...${RESET}"
     
-    # Ejecutar comando
-    iwctl --passphrase $password station $selected_interface connect "$ssid" 2>/dev/null
+    # Guardar contraseña en archivo temporal para evitar problemas de escaping
+    local temp_pass_file="/tmp/wifi_pass_$$"
+    echo -n "$password" > "$temp_pass_file"
     
-    # ESPERAR Y VERIFICAR CONEXIÓN
-    echo -e "${CYAN}Esperando establecimiento de conexión...${RESET}"
-    local wait_time=0
-    local max_wait=20
-    
-    while [[ $wait_time -lt $max_wait ]]; do
-        sleep 2
-        wait_time=$((wait_time + 2))
-        echo -ne "${WHITE}Esperando... ($wait_time/$max_wait segundos)${RESET}\r"
+    # Ejecutar comando con la contraseña desde archivo
+    if cat "$temp_pass_file" | iwctl --passphrase="$(cat $temp_pass_file)" station "$selected_interface" connect "$ssid" 2>/dev/null; then
+        rm -f "$temp_pass_file"
         
-        if iwctl station "$selected_interface" show 2>/dev/null | grep -q "State.*connected"; then
-            echo
-            echo -e "${GREEN}✔ Conectado a WiFi${RESET}"
+        # ESPERAR Y VERIFICAR CONEXIÓN
+        echo -e "${CYAN}Esperando establecimiento de conexión...${RESET}"
+        local wait_time=0
+        local max_wait=20
+        
+        while [[ $wait_time -lt $max_wait ]]; do
+            sleep 2
+            wait_time=$((wait_time + 2))
+            echo -ne "${WHITE}Esperando... ($wait_time/$max_wait segundos)${RESET}\r"
             
-            # Verificar Internet con múltiples intentos
-            local ping_ok=false
-            for i in {1..5}; do
-                if ping -c 1 -W 3 archlinux.org &>/dev/null || ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
-                    ping_ok=true
-                    break
+            if iwctl station "$selected_interface" show 2>/dev/null | grep -q "State.*connected"; then
+                echo
+                echo -e "${GREEN}✔ Conectado a WiFi${RESET}"
+                
+                # Verificar Internet con múltiples intentos
+                local ping_ok=false
+                for i in {1..5}; do
+                    if ping -c 1 -W 3 archlinux.org &>/dev/null || ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
+                        ping_ok=true
+                        break
+                    fi
+                    sleep 2
+                done
+                
+                if $ping_ok; then
+                    log "SUCCESS" "Conexión WiFi establecida"
+                    save_network_credentials "wifi" "$ssid" "$password" "$selected_interface"
+                    return 0
+                else
+                    echo -e "${YELLOW}⚠ WiFi conectado pero sin Internet${RESET}"
                 fi
-                sleep 2
-            done
-            
-            if $ping_ok; then
-                log "SUCCESS" "Conexión WiFi establecida"
-                save_network_credentials "wifi" "$ssid" "$password" "$selected_interface"
-                return 0
-            else
-                echo -e "${YELLOW}⚠ WiFi conectado pero sin Internet${RESET}"
+                break
             fi
-            break
-        fi
-    done
+        done
+    else
+        rm -f "$temp_pass_file"
+    fi
     
     echo
     echo -e "${RED}✘ No se pudo establecer la conexión${RESET}"
+    echo -e "${YELLOW}Verifique que la contraseña sea correcta${RESET}"
     return 1
 }
 
@@ -1875,14 +1909,25 @@ install_essential_packages() {
             return 1
         fi
         
+        # Mostrar contenido del archivo para debugging
+        echo -e "${CYAN}Leyendo credenciales...${RESET}"
+        
         # Leer credenciales del archivo
         local connection_type=""
         local wifi_ssid=""
         local wifi_password=""
         local wifi_interface=""
         
-        # Leer archivo línea por línea
+        # Leer archivo línea por línea, manejando las comillas simples
         while IFS='=' read -r key value; do
+            # Ignorar comentarios y líneas vacías
+            [[ $key =~ ^#.*$ ]] && continue
+            [[ -z $key ]] && continue
+            
+            # Remover comillas simples del valor si existen
+            value="${value#\'}"
+            value="${value%\'}"
+            
             case "$key" in
                 "CONNECTION_TYPE")
                     connection_type="$value"
@@ -1903,6 +1948,7 @@ install_essential_packages() {
         echo -e "  Tipo: $connection_type"
         echo -e "  SSID: $wifi_ssid"
         echo -e "  Interface: $wifi_interface"
+        echo -e "  Contraseña: [${wifi_password}]"  # Mostrar para debugging
         
         if [[ "$connection_type" == "wifi" ]] && [[ -n "$wifi_ssid" ]] && [[ -n "$wifi_password" ]]; then
             echo -e "${CYAN}Reconectando a WiFi: \"$wifi_ssid\"${RESET}"
@@ -1918,9 +1964,13 @@ install_essential_packages() {
                 iwctl station "$interface" disconnect 2>/dev/null
                 sleep 2
                 
-                # Reconectar
+                # Reconectar usando archivo temporal para la contraseña
                 echo -e "${WHITE}Conectando con iwctl...${RESET}"
-                if echo "$wifi_password" | iwctl station "$interface" connect "$wifi_ssid" --passphrase 2>/dev/null; then
+                local temp_pass_file="/tmp/wifi_reconn_pass_$$"
+                echo -n "$wifi_password" > "$temp_pass_file"
+                
+                if cat "$temp_pass_file" | iwctl --passphrase="$(cat $temp_pass_file)" station "$interface" connect "$wifi_ssid" 2>/dev/null; then
+                    rm -f "$temp_pass_file"
                     sleep 5
                     
                     # Verificar conexión múltiples veces
@@ -1933,6 +1983,8 @@ install_essential_packages() {
                         ((verify_attempts++))
                         sleep 2
                     done
+                else
+                    rm -f "$temp_pass_file"
                 fi
             fi
             
